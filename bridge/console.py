@@ -127,7 +127,7 @@ def rule(char=None, colour=None):
     print(f"{colour or C.GREY}{(char or G['h']) * width()}{C.RESET}")
 
 
-def banner(version, port, roots, tools, unrestricted=False):
+def banner(version, port, roots, tools, unrestricted=False, no_bash=False):
     art = BANNER if UNICODE else BANNER_ASCII
     pad = " " * max(0, (width() - 71) // 2) if UNICODE else ""
     print()
@@ -147,6 +147,10 @@ def banner(version, port, roots, tools, unrestricted=False):
         row("sandbox", home_short(roots[0]) if roots else "?", C.GREEN)
         for extra in roots[1:]:
             print(f"  {'':<9} {C.GREEN}{home_short(extra)}{C.RESET}")
+    # Worth its own line rather than leaving it to be noticed as an absence in
+    # the tool list: with no shell the sandbox above is the whole boundary.
+    if no_bash:
+        row("shell", "none - bash was not loaded", C.GREEN)
     row("tools", f"{len(tools)}  {C.DIM}{' '.join(sorted(tools))}")
     print()
 

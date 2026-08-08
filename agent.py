@@ -8,6 +8,7 @@ back both the machine-readable results and the plain text pasted into the chat.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -24,13 +25,15 @@ for _stream in (sys.stdout, sys.stderr):
 
 from bridge import console as ui                      # noqa: E402
 from bridge.render import render_results              # noqa: E402
-from bridge.tools import TOOLS, dispatch, parse_roots, set_roots  # noqa: E402
+from bridge.tools import (TOOLS, disable_tools, dispatch,        # noqa: E402
+                          parse_roots, set_roots)
 
 VERSION = "1.0"
 
 # Both are settled by the command line in main() before anything serves.
 PORT = int(os.environ.get("BRIDGE_PORT", 3456))
 ROOTS = parse_roots(os.environ.get("BRIDGE_ROOTS"))   # None means unrestricted
+NO_BASH = False                                       # --no-bash drops the shell
 
 # Served to the userscript so a chat can be primed from the browser. The agent
 # owns this file, so what the model is told it can do always matches the tool
@@ -56,6 +59,7 @@ def parse_args(argv):
                "  python agent.py C:/work/api              only that project\n"
                "  python agent.py C:/work/api D:/notes     two directories\n"
                "  python agent.py --all                    no sandbox at all\n"
+               "  python agent.py C:/work/api --no-bash    no shell at all\n"
                "\n"
                "BRIDGE_ROOTS and BRIDGE_PORT still work; arguments win over both.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -66,6 +70,10 @@ def parse_args(argv):
                     action="store_true",
                     help="disable the sandbox: file tools may reach anything "
                          "this account can. bash is unbounded either way.")
+    ap.add_argument("--no-bash", dest="no_bash", action="store_true",
+                    help="drop the bash tool. Without a shell the directory "
+                         "allowlist is the whole boundary, not a bound on "
+                         "twelve tools out of thirteen.")
     ap.add_argument("--port", type=int, default=PORT,
                     help=f"port to listen on (default {PORT})")
     args = ap.parse_args(argv)
@@ -84,7 +92,40 @@ def parse_args(argv):
     return args
 
 
-def workspace_block(roots):
+# Text the prompt carries about a shell that may not exist. Each is replaced
+# rather than contradicted: a prompt that describes bash in three places and
+# then says "except not really" invites the model to try it anyway and burn a
+# turn on the error.
+BASH_EDITS = [
+    # The tool's own reference section, up to the next heading.
+    (re.compile(r"── bash ─+\n.*?(?=\n── )", re.S),
+     "── bash ────────────────────────────────────\n"
+     "NOT AVAILABLE in this session. There is no shell: nothing here can run a\n"
+     "program, a test, git, or a package manager. Do not emit a bash call.\n"),
+    ("Use these rather than bash for file management. They are bounded by the\n"
+     "directory allowlist; shell commands are not.",
+     "These are the only way to touch anything, and they are bounded by the\n"
+     "directory allowlist. There is no shell in this session."),
+    ("5. After editing code, RUN it with bash to verify it actually works. A change\n"
+     "   you have not executed is not finished.",
+     "5. You cannot run anything - there is no shell here. Say what you changed and\n"
+     "   what I should run to check it."),
+    # The worked example of a rendered result ends on a bash call. Left alone it
+    # is a demonstration that the tool works, sitting below the text saying it
+    # does not.
+    ("[3] bash  python C:/temp/app.py  ok  exit 0\nstdout:\nhi",
+     "[3] list  C:/temp  ok  4 entries"),
+]
+
+
+def strip_bash(text):
+    """Rewrite the served prompt for a session with no shell."""
+    for find, repl in BASH_EDITS:
+        text = find.sub(repl, text) if hasattr(find, "sub") else text.replace(find, repl)
+    return text
+
+
+def workspace_block(roots, no_bash=False):
     """The WORKSPACE section of the system prompt, describing the real sandbox."""
     if roots is None:
         body = ["The directory sandbox is DISABLED. File tools can reach "
@@ -103,16 +144,25 @@ def workspace_block(roots):
                  "guard working, not a bug. If a task genuinely needs another "
                  "directory, say so",
                  "and wait: I will restart the agent with that directory added."]
-    body += ["",
-             "bash is NOT bounded by this list. A shell command reaches "
-             "whatever my account",
-             "can, so treat shell commands with more care than file calls."]
+    if no_bash:
+        body += ["",
+                 "There is no shell in this session - the bash tool was not "
+                 "loaded. Nothing here",
+                 "can run a program, so the list above is the whole of what I "
+                 "can reach."]
+    else:
+        body += ["",
+                 "bash is NOT bounded by this list. A shell command reaches "
+                 "whatever my account",
+                 "can, so treat shell commands with more care than file calls."]
     return "\n".join(body)
 
 
-def build_prompt(text, roots):
+def build_prompt(text, roots, no_bash=False):
     """Fill the served prompt's WORKSPACE section in from the live sandbox."""
-    block = workspace_block(roots)
+    if no_bash:
+        text = strip_bash(text)
+    block = workspace_block(roots, no_bash)
     if WORKSPACE_PLACEHOLDER in text:
         return text.replace(WORKSPACE_PLACEHOLDER, block)
     # An edited prompt that dropped the placeholder still has to learn what it
@@ -135,8 +185,48 @@ def normalize_calls(body):
     return []
 
 
+# Only the userscript may talk to this agent. Binding 127.0.0.1 keeps
+# other machines out, but it does NOT keep out the web page you happen to have
+# open: a browser will happily send a page's fetch() to localhost, and the
+# tools here run shell commands. Two things stand in the way, and both matter.
+#
+#   * A required custom header. A cross-origin request carrying one is not a
+#     "simple request", so the browser must preflight it - and OPTIONS below
+#     refuses every preflight. That leaves only requests that CANNOT set
+#     headers (forms, no-cors fetch), which are refused for lacking it. There
+#     is no third case a page can reach. The userscript is unaffected: it calls
+#     through GM_xmlhttpRequest, which is privileged and never preflights.
+#
+#   * A Host check. Without it, an attacker domain whose DNS answers
+#     127.0.0.1 is same-origin with this agent by the browser's rules, and
+#     every origin-based defence evaporates. This is DNS rebinding, and it is
+#     the reason an Origin allowlist alone would not be enough.
+#
+# Note what is deliberately absent: Access-Control-Allow-Origin. Advertising
+# "*" told every site on the internet it could read the replies.
+AUTH_HEADER = "X-Anybridge"
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
 class AgentHandler(BaseHTTPRequestHandler):
+    def _authorised(self):
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip().lower()
+        # A missing Host is HTTP/1.0 or a hand-rolled client, never a browser.
+        if host and host not in LOCAL_HOSTS:
+            ui.note(f"refused a request for host {host!r} - "
+                    f"only localhost may reach this agent", ui.C.RED)
+            return False
+        if not self.headers.get(AUTH_HEADER):
+            origin = self.headers.get("Origin") or "an unknown client"
+            ui.note(f"refused a request from {origin} with no {AUTH_HEADER} "
+                    f"header", ui.C.RED)
+            return False
+        return True
+
     def do_GET(self):
+        if not self._authorised():
+            self._respond({"error": "forbidden"}, code=403)
+            return
         if self.path == "/health":
             self._respond({"status": "online", "name": "anybridge",
                            "version": VERSION, "tools": sorted(TOOLS)})
@@ -151,7 +241,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                 self._respond({"error": f"cannot read the system prompt: {e}"},
                               code=500)
                 return
-            text = build_prompt(text, ROOTS)
+            text = build_prompt(text, ROOTS, NO_BASH)
             ui.note(f"served the system prompt ({len(text)} chars)")
             self._respond({"prompt": text, "version": VERSION,
                            "roots": ROOTS if ROOTS is not None else "*"})
@@ -160,6 +250,14 @@ class AgentHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
+        if not self._authorised():
+            # Drain the body before answering. Replying while the client is
+            # still sending resets the connection, so the caller sees a socket
+            # error instead of the 403 telling it why it was refused.
+            if length:
+                self.rfile.read(length)
+            self._respond({"error": "forbidden"}, code=403)
+            return
         try:
             body = json.loads(self.rfile.read(length)) if length else {}
         except json.JSONDecodeError as e:
@@ -199,16 +297,16 @@ class AgentHandler(BaseHTTPRequestHandler):
         payload = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(payload)
 
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # Answering a preflight is what would let a web page send the header
+        # required above. Refusing every one of them is the point.
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
+        self.wfile.write(b'{"error": "forbidden"}')
 
     def log_message(self, fmt, *args):
         pass       # the console output above replaces the default HTTP log
@@ -222,9 +320,12 @@ class BridgeServer(HTTPServer):
 
 
 def main(argv=None):
-    global PORT, ROOTS
+    global PORT, ROOTS, NO_BASH
     args = parse_args(sys.argv[1:] if argv is None else argv)
     PORT = args.port
+    NO_BASH = args.no_bash
+    if NO_BASH:
+        disable_tools(["bash"])
     # The command line wins over BRIDGE_ROOTS; with neither, ROOTS keeps the
     # default it was built with at import.
     if args.unrestricted:
@@ -234,7 +335,8 @@ def main(argv=None):
     else:
         ROOTS = set_roots(ROOTS)
 
-    ui.banner(VERSION, PORT, ROOTS or [], TOOLS, unrestricted=ROOTS is None)
+    ui.banner(VERSION, PORT, ROOTS or [], TOOLS, unrestricted=ROOTS is None,
+              no_bash=NO_BASH)
     try:
         server = BridgeServer(("127.0.0.1", PORT), AgentHandler)
     except OSError as e:

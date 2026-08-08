@@ -634,6 +634,18 @@ def _check_paths(call):
     return None
 
 
+def disable_tools(names):
+    """
+    Drop tools from the registry for this run. They then read to the model as
+    unknown tools, which is the same answer a typo gets - there is no separate
+    "disabled" state for it to argue with or try to re-enable.
+
+    Removing bash is what turns the directory allowlist into a real boundary
+    rather than a bound on twelve of thirteen tools.
+    """
+    return [n for n in names if TOOLS.pop(n, None) is not None]
+
+
 def dispatch(call):
     """Run one tool call dict. Never raises."""
     if not isinstance(call, dict):

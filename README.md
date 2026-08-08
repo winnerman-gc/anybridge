@@ -52,8 +52,17 @@ python agent.py                        # default: your home tree + C:/temp
 python agent.py C:/work/api            # only this project
 python agent.py C:/work/api D:/notes   # several directories
 python agent.py --all                  # no sandbox at all
+python agent.py C:/work/api --no-bash  # no shell: the sandbox is the real boundary
 python agent.py C:/work/api --port 4000
 ```
+
+**`--no-bash` is the setting that makes the sandbox mean something.** The
+allowlist bounds the twelve file tools; `bash` was never bounded by anything, so
+while a shell is loaded the sandbox constrains twelve tools out of thirteen.
+Drop it and the directories above become the whole of what the chat can reach.
+The cost is that it can no longer run your tests or your program — it edits, and
+you run. The served prompt is rewritten to match, so the model is not told about
+a tool it does not have.
 
 A directory that does not exist is rejected rather than silently becoming a
 sandbox that allows nothing. `--all` refuses to take directories, because then
@@ -71,6 +80,14 @@ intended before you start a chat:
   pid       5896
   sandbox   C:/work/api
   tools     13  bash copy delete edit glob grep insert_lines list mkdir ...
+```
+
+With `--no-bash` it says so outright, and the tool count drops to 12:
+
+```
+  sandbox   C:/work/api
+  shell     none - bash was not loaded
+  tools     12  copy delete edit glob grep insert_lines list mkdir move ...
 ```
 
 ### 3. Install the userscript
@@ -102,7 +119,8 @@ it a task.
 The browser console shows a badge reading `anybridge v1.0 <site>` on an active
 site. From there:
 
-- `curl http://localhost:3456/health` — the agent is up and lists its tools
+- `curl -H "X-Anybridge: 1" http://localhost:3456/health` — the agent is up and
+  lists its tools. The header is required; see the safety model for why.
 - Ask the chat to list one of your sandbox directories. The agent console prints
   every call it runs, so you can watch it happen.
 
@@ -140,7 +158,7 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 107 tests + 5 live captures replayed
+python tests/run_all.py            # 132 tests + 5 live captures replayed
 python tests/run_all.py --mutate   # also check the tests can actually fail (13 mutations)
 python tests/run_all.py --bench    # throughput
 ```
@@ -169,10 +187,17 @@ and only mutation testing showed it.
   block. The script records what it primed a chat with and refuses to act on
   anything that came from it.
 
-**`bash` is not sandboxed.** The allowlist bounds the file tools; a shell
-command reaches anything your account can, whatever directories you passed to
-`agent.py`. The other twelve tools exist partly so `bash` is rarely needed — but
-nothing here contains it. Bounding a shell needs a container, not a path check.
+**`bash` is not sandboxed** — so run with `--no-bash` if you want the allowlist
+to be a real boundary. While a shell is loaded, a command reaches anything your
+account can, whatever directories you passed to `agent.py`; bounding a shell
+needs a container, not a path check. `--no-bash` removes the tool outright, and
+the twelve remaining tools are all bounded by the allowlist.
+
+Even then, be honest about what a sandbox of files buys you. Anything inside it
+that later gets *executed* — a script you run afterwards, a `.bashrc`, a
+`package.json`, a git hook — is still a path to code execution, just a slower
+one. A narrow sandbox of a single project directory is worth much more than a
+wide one that includes your home tree.
 
 Anything the model reads becomes part of its input, so a file containing
 something shaped like an instruction is a prompt-injection vector. The allowlist
@@ -180,6 +205,23 @@ limits the blast radius; it does not remove the risk.
 
 The agent binds `127.0.0.1` only. Do not expose the port; anything that can
 reach it can run tools as you.
+
+Binding localhost does **not**, by itself, keep out the web pages you have open
+— a browser will send any site's `fetch()` to `localhost` quite happily, and
+these tools run shell commands. Two things stop that:
+
+- **Every request must carry an `X-Anybridge` header.** Sending one makes a
+  cross-origin request non-simple, so the browser must preflight it first, and
+  the agent refuses every preflight. That leaves only the request types that
+  cannot set headers at all — forms, `no-cors` fetch — which are refused for
+  lacking it. The userscript is unaffected: `GM_xmlhttpRequest` is privileged
+  and never preflights.
+- **The `Host` header must be localhost.** Otherwise an attacker's domain whose
+  DNS answers `127.0.0.1` is same-origin with the agent by the browser's own
+  rules, and an origin allowlist would prove nothing. That is DNS rebinding.
+
+The agent also sends no `Access-Control-Allow-Origin` header at all, so no site
+can read a reply even if it manages to provoke one.
 
 ## Contributing
 

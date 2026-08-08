@@ -24,6 +24,13 @@
     // ── Tunables ────────────────────────────────────────────
     const DEBUG        = false;   // per-block logging; costly on large blocks
     const AGENT_URL    = "http://localhost:3456";
+    // The agent refuses anything without X-Anybridge. That header is what a web
+    // page cannot send: setting it makes the request non-simple, so the browser
+    // demands a preflight first, and the agent refuses every preflight. This
+    // script is exempt because GM_xmlhttpRequest is privileged and does not
+    // preflight - which is exactly why the tools are reachable from here and
+    // from nowhere else in the browser.
+    const AGENT_HEADERS = { "Content-Type": "application/json", "X-Anybridge": "1" };
     const TICK_MS      = 1500;    // scan cadence (only does work when DOM changed)
     const MAX_BLOCKS   = 15;      // newest N leaf code blocks considered
     const MIN_LEN      = 20;      // below this a block cannot hold a payload
@@ -876,6 +883,7 @@
             GM_xmlhttpRequest({
                 method: "GET",
                 url: AGENT_URL + "/prompt",
+                headers: AGENT_HEADERS,
                 timeout: 15000,
                 onload: res => {
                     let data;
@@ -983,7 +991,7 @@
                 GM_xmlhttpRequest({
                     method: "POST",
                     url: AGENT_URL,
-                    headers: { "Content-Type": "application/json" },
+                    headers: AGENT_HEADERS,
                     data: JSON.stringify({ calls: mergedCalls }),
                     timeout: 120000,
                     onload: res => {

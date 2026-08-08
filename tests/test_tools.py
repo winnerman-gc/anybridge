@@ -1,5 +1,5 @@
 """Behaviour tests for tools.py, run against a throwaway sandbox."""
-import os, sys, shutil, tempfile
+import json, os, sys, shutil, tempfile
 
 WORK = tempfile.mkdtemp(prefix="bridge_test_")
 os.environ["BRIDGE_ROOTS"] = WORK
@@ -186,6 +186,96 @@ ck("a directory that does not exist is rejected",
    rejects([os.path.join(WORK, "does_not_exist")]))
 ck("plain arguments become the sandbox", agent.parse_args([second]).dirs == [second])
 
+tools.set_roots(saved)
+
+print("\n== --no-bash removes the shell, not just the mention of it ==")
+# The allowlist bounds the file tools; bash was never bounded by anything. With
+# it gone the sandbox is the whole boundary, so this flag is the difference
+# between a real one and a bound on twelve tools out of thirteen.
+tools.set_roots([WORK])
+ck("bash is present by default", "bash" in tools.TOOLS)
+ck("--no-bash is off unless asked", agent.parse_args([second]).no_bash is False)
+ck("--no-bash parses", agent.parse_args([second, "--no-bash"]).no_bash is True)
+
+ck("disable_tools reports what it removed", tools.disable_tools(["bash"]) == ["bash"])
+ck("...and removing it twice is not an error", tools.disable_tools(["bash"]) == [])
+r = dispatch({"tool": "bash", "cmd": "echo should not run"})
+ck("a bash call is now an unknown tool", not r["ok"] and "unknown tool" in r["error"], r)
+ck("the error lists the twelve that remain",
+   "bash" not in r.get("available", []) and len(r.get("available", [])) == 12, r)
+ck("the file tools still work", dispatch({"tool": "list", "path": WORK})["ok"])
+
+real_prompt = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "prompts", "sys_prompt.txt"), encoding="utf-8").read()
+nb = agent.build_prompt(real_prompt, [WORK], no_bash=True)
+ck("the prompt stops advertising bash as an escape hatch",
+   "Escape hatch. Runs through" not in nb and "NOT AVAILABLE in this session" in nb)
+ck("the rule telling it to run its edits is replaced",
+   "RUN it with bash" not in nb and "You cannot run anything" in nb)
+ck("the worked example no longer ends on a shell command",
+   "[3] bash  python" not in nb)
+ck("the workspace says there is no shell", "There is no shell in this session" in nb)
+ck("and drops the warning about bash being unbounded",
+   "bash is NOT bounded" not in nb)
+# With bash present none of that rewriting may happen.
+yb = agent.build_prompt(real_prompt, [WORK], no_bash=False)
+ck("with bash, the prompt is left alone",
+   "Escape hatch. Runs through" in yb and "bash is NOT bounded" in yb)
+ck("...and it is otherwise the same prompt",
+   yb.count("── ") == nb.count("── "), f"{yb.count('── ')} vs {nb.count('── ')}")
+
+tools.TOOLS["bash"] = tools.t_bash          # the suite below expects all 13
+
+print("\n== the agent answers the userscript and nothing else ==")
+# Binding 127.0.0.1 does not keep out the web page you have open: a browser
+# sends a page's fetch() to localhost quite happily, and these tools run shell
+# commands. Every case below is a request a malicious page can actually make.
+import contextlib, io, threading, urllib.error, urllib.request      # noqa: E402
+
+tools.set_roots([WORK])
+srv = agent.BridgeServer(("127.0.0.1", 0), agent.AgentHandler)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+BASE = "http://127.0.0.1:%d" % srv.server_address[1]
+
+def hit(path="/", method="POST", headers=None, body=None):
+    """Status code of one request, with the agent's console noise swallowed."""
+    r = urllib.request.Request(BASE + path, data=body, method=method)
+    for k, v in (headers or {}).items():
+        r.add_header(k, v)
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+MARK = w("cross_origin_marker.txt")
+EVIL = json.dumps({"calls": [{"tool": "write", "path": MARK, "lines": ["x"]}]}).encode()
+JSON_H = {"Content-Type": "application/json"}
+OK_H = dict(JSON_H, **{agent.AUTH_HEADER: "1"})
+
+ck("a page's plain POST is refused", hit(body=EVIL, headers=JSON_H) == 403)
+ck("...and refused BEFORE the call runs", not os.path.exists(MARK))
+ck("a POST claiming an origin is refused",
+   hit(body=EVIL, headers=dict(JSON_H, Origin="https://evil.example")) == 403)
+# The header is what a page cannot send: it makes the request non-simple, so
+# the browser preflights first. Answering that preflight would hand the page
+# the very permission this depends on.
+ck("the preflight that would allow the header is refused",
+   hit(method="OPTIONS", headers={"Origin": "https://evil.example",
+                                  "Access-Control-Request-Headers": agent.AUTH_HEADER}) == 403)
+# DNS rebinding: an attacker domain answering 127.0.0.1 is same-origin with
+# this agent by the browser's rules, so an Origin allowlist alone would not do.
+ck("a request for someone else's host is refused",
+   hit(body=EVIL, headers=dict(OK_H, Host="evil.example")) == 403)
+ck("still nothing was written", not os.path.exists(MARK))
+
+ck("the userscript's own request is served", hit(body=EVIL, headers=OK_H) == 200)
+ck("...and it really did run", os.path.exists(MARK))
+ck("GET /health needs the header too", hit("/health", "GET") == 403)
+ck("GET /health is served with it", hit("/health", "GET", OK_H) == 200)
+
+srv.shutdown()
 tools.set_roots(saved)
 
 print(f"\n{'FAILURES' if F else 'ALL PASS'}: {P} passed, {F} failed")
