@@ -88,13 +88,28 @@ const SYS_PROMPT = fs.readFileSync(
     require('path').join(__dirname, '..', 'prompts', 'sys_prompt.txt'), 'utf8');
 
 const sent = [];
+// The agent hands out a token once and demands it thereafter, so the fake
+// enforces the same contract: anything without the current token gets 403, and
+// the script is expected to pair itself rather than give up.
+const agentState = { token: 'tok-1', pairings: 0, pairAllowed: true, sawToken: [] };
 global.GM_xmlhttpRequest = (opts) => {
-    if ((opts.method || 'POST').toUpperCase() === 'GET') {
-        setTimeout(() => opts.onload({ responseText: JSON.stringify({ prompt: SYS_PROMPT, version: 'test' }) }), 0);
-        return;
+    const method = (opts.method || 'POST').toUpperCase();
+    const headers = opts.headers || {};
+    const reply = (status, body) =>
+        setTimeout(() => opts.onload({ status, responseText: JSON.stringify(body) }), 0);
+
+    if (String(opts.url || '').endsWith('/pair')) {
+        agentState.pairings++;
+        if (!agentState.pairAllowed) return reply(409, { error: 'already paired' });
+        agentState.pairAllowed = false;
+        return reply(200, { token: agentState.token, version: 'test' });
     }
+    agentState.sawToken.push(headers['X-Anybridge-Token']);
+    if (headers['X-Anybridge-Token'] !== agentState.token) return reply(403, { error: 'forbidden' });
+
+    if (method === 'GET') return reply(200, { prompt: SYS_PROMPT, version: 'test' });
     sent.push(JSON.parse(opts.data));
-    setTimeout(() => opts.onload({ responseText: JSON.stringify({ results: [{ ok: true, tool: 'bash' }] }) }), 0);
+    reply(200, { results: [{ ok: true, tool: 'bash' }] });
 };
 
 // ---- fake Tampermonkey menu ----------------------------------------------
@@ -141,6 +156,27 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     sent.length = 0;
     tick(); await sleep(); tick(); await sleep();
     check('already-executed id not re-sent', sent.length === 0);
+
+    console.log('\n== a payload with no id still executes once ==');
+    // The generated id used to come from the clock, so it was unique every time
+    // it was built: the replay guard could not recognise it and did not record
+    // it. An id-less block therefore ran again every time its text came back
+    // round - a reload, a rescan, the same answer seen twice.
+    sent.length = 0;
+    const noid = '{"calls":[{"tool":"bash","cmd":"echo idless"}]}';
+    mkBlock(noid);
+    tick(); await sleep(); tick(); await sleep();
+    check('an id-less payload runs', sent.length === 1 && sent[0].calls[0].cmd === 'echo idless');
+    sent.length = 0;
+    mkBlock(noid);                      // the same answer, seen again
+    tick(); await sleep(); tick(); await sleep();
+    check('...and does NOT run a second time', sent.length === 0);
+    // Same shape, different command: a different request, so it must still run.
+    sent.length = 0;
+    mkBlock('{"calls":[{"tool":"bash","cmd":"echo different"}]}');
+    tick(); await sleep(); tick(); await sleep();
+    check('a different id-less payload is not confused with it',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo different');
 
     console.log('\n== results payload is ignored ==');
     sent.length = 0;
@@ -254,6 +290,47 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     tick(); await sleep(); tick(); await sleep();
     check('a genuine payload after priming still runs',
         sent.length === 1 && sent[0].calls[0].cmd === 'echo real');
+
+    console.log('\n== a repaired payload may edit, but may not run a shell ==');
+    // The repair rewrites text outside string literals - strips comments, drops
+    // trailing commas, rewrites Python literals - so what runs is a guess at
+    // what was meant. Bounded and reversible for a file edit; neither for a
+    // shell command.
+    sent.length = 0;
+    mkBlock('{"id":"rep_1", // planning\n "calls":[{"tool":"bash","cmd":"echo repaired",}]}');
+    tick(); await sleep(); tick(); await sleep();
+    check('a bash call that only parsed after repair does not run', sent.length === 0,
+        JSON.stringify(sent));
+    sent.length = 0;
+    mkBlock('{"id":"rep_2", // planning\n "calls":[{"tool":"list","path":"C:/t",}]}');
+    tick(); await sleep(); tick(); await sleep();
+    check('a repaired file call still runs',
+        sent.length === 1 && sent[0].calls[0].tool === 'list', JSON.stringify(sent));
+    sent.length = 0;
+    mkBlock('{"id":"rep_3","calls":[{"tool":"bash","cmd":"echo clean"}]}');
+    tick(); await sleep(); tick(); await sleep();
+    check('a well-formed bash call is untouched',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo clean', JSON.stringify(sent));
+
+    console.log('\n== pairing happens by itself ==');
+    // Nothing above asked for a token, so if the calls got through, the script
+    // noticed the 403, paired, and retried on its own.
+    check('it paired without being asked once', agentState.pairings === 1);
+    check('the first call went out with no token', agentState.sawToken[0] === undefined);
+    check('every call after pairing carried it',
+        agentState.sawToken.slice(1).every(t => t === 'tok-1'),
+        JSON.stringify(agentState.sawToken));
+
+    // What an agent restart looks like from in here: the old token stops
+    // working and a new pairing is available.
+    agentState.token = 'tok-2';
+    agentState.pairAllowed = true;
+    sent.length = 0;
+    mkBlock('{"id":"after_restart_1","calls":[{"tool":"bash","cmd":"echo restarted"}]}');
+    tick(); await sleep(); tick(); await sleep(); await sleep();
+    check('a restarted agent is re-paired with automatically', agentState.pairings === 2);
+    check('...and the call goes through on the new token',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo restarted', JSON.stringify(sent));
 
     console.log('\n== dirty-flag gating ==');
     sent.length = 0;

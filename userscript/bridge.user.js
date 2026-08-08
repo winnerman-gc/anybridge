@@ -31,6 +31,20 @@
     // preflight - which is exactly why the tools are reachable from here and
     // from nowhere else in the browser.
     const AGENT_HEADERS = { "Content-Type": "application/json", "X-Anybridge": "1" };
+
+    // The header above stops web pages; it cannot tell one LOCAL program from
+    // another, since anything running as you can send it too. So the agent
+    // mints a token per run and gives it out once, to the first caller that
+    // asks - and this script asks by itself, on its first call and again
+    // whenever its stored token stops working (which is what an agent restart
+    // looks like from here). Nothing to paste, and no long-lived secret: a new
+    // agent run means a new token.
+    //
+    // If something else takes the pairing first, /pair answers 409 and the
+    // bridge stops rather than carrying on unprotected. That is deliberate -
+    // the failure is visible, and restarting the agent re-pairs.
+    const TOKEN_KEY = 'bridge_token';
+
     const TICK_MS      = 1500;    // scan cadence (only does work when DOM changed)
     const MAX_BLOCKS   = 15;      // newest N leaf code blocks considered
     const MIN_LEN      = 20;      // below this a block cannot hold a payload
@@ -457,6 +471,42 @@
             .forEach(({ k }) => GM_deleteValue(k));
     }
 
+    // A payload with no "id" used to get one built from the clock, which is
+    // unique every time it is generated - so the replay guard could neither
+    // recognise it nor usefully record it, and both were skipped for those ids.
+    // The effect was that an id-less block re-ran every time its text came back
+    // round: a reload, a second scan, the stream path and the DOM path seeing
+    // the same answer. Deriving the id from the CALLS instead makes the same
+    // request produce the same id, so it dedupes like any other.
+    //
+    // FNV-1a, because this needs to be stable and cheap, not cryptographic.
+    // A payload that only parsed after repair is a guess about what the model
+    // meant. The repair rewrites the text outside string literals - strips
+    // comments, drops trailing commas, turns True into true - so what runs is
+    // not quite what was written. That is a fine trade for a file edit, whose
+    // damage is bounded by the allowlist and undone by reading the file back.
+    // It is not a fine trade for a shell command, which no allowlist bounds and
+    // which cannot be un-run. So a repaired payload may edit; it may not run.
+    function dropsShellWhenRepaired(calls, repaired, where) {
+        if (!repaired) return calls;
+        const clean = calls.filter(c => !c || c.tool !== 'bash');
+        if (clean.length !== calls.length) {
+            console.log(`🚫 ${where} Refusing a bash call from a payload that only `
+                + `parsed after repair - re-send it as valid JSON`);
+        }
+        return clean;
+    }
+
+    function contentId(calls) {
+        const s = JSON.stringify(calls);
+        let h = 0x811c9dc5;
+        for (let i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+        }
+        return `auto_h${h.toString(16)}_${s.length}`;
+    }
+
     function hasBeenExecuted(commandId) {
         return GM_getValue(`bridge_${getChatId()}_${commandId}`, false);
     }
@@ -761,10 +811,11 @@
         } else if (Array.isArray(payload.commands) && payload.commands.length > 0) {
             calls = payload.commands.map(c => ({ tool: "bash", cmd: c }));
         }
-        if (!calls) { settledAt.set(el, text.length); return null; }
+        calls = dropsShellWhenRepaired(calls, parsed.repaired, `[BLOCK ${i}]`);
+        if (!calls || !calls.length) { settledAt.set(el, text.length); return null; }
 
-        const commandId = payload.id || `auto_${Date.now()}_${i}`;
-        if (payload.id && hasBeenExecuted(commandId)) {
+        const commandId = payload.id || contentId(calls);
+        if (hasBeenExecuted(commandId)) {
             log(`   ⏭️ [BLOCK ${i}] Already executed: "${commandId}"`);
             settledAt.set(el, text.length);
             return null;
@@ -873,29 +924,72 @@
         setTimeout(() => clickSend(target), 500);
     }
 
+    function agentRequest(opts, allowPairing) {
+        const token = GM_getValue(TOKEN_KEY, '');
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest(Object.assign({}, opts, {
+                headers: Object.assign({}, AGENT_HEADERS,
+                    token ? { 'X-Anybridge-Token': token } : {}),
+                onload: async res => {
+                    // 403 means the agent does not know this token: either we
+                    // have none yet, or it restarted and minted a new one.
+                    if (res.status === 403 && allowPairing !== false) {
+                        try {
+                            await pair();
+                        } catch (e) {
+                            return reject(e);
+                        }
+                        return agentRequest(opts, false).then(resolve, reject);
+                    }
+                    resolve(res);
+                },
+                onerror: err => reject(err),
+                ontimeout: () => reject('Agent timeout')
+            }));
+        });
+    }
+
+    function pair() {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: AGENT_URL + '/pair',
+                headers: AGENT_HEADERS,
+                timeout: 15000,
+                onload: res => {
+                    if (res.status === 409) {
+                        return reject('another client paired with the agent first - '
+                            + 'restart the agent to pair this browser');
+                    }
+                    let data;
+                    try { data = JSON.parse(res.responseText); } catch { data = null; }
+                    if (!data || !data.token) return reject('agent refused to pair');
+                    GM_setValue(TOKEN_KEY, data.token);
+                    console.log('🔑 [PAIR] Paired with the agent');
+                    resolve(data.token);
+                },
+                onerror: () => reject('agent unreachable - is `python agent.py` running?'),
+                ontimeout: () => reject('agent timeout while pairing')
+            });
+        });
+    }
+
     // Fetched from the agent rather than baked in here: prompts/sys_prompt.txt
     // belongs to the agent, so the text describes the tool set that is actually
     // running, and editing it needs no reinstall of this script. It also means
     // priming fails loudly when the agent is down - which is the one case where
     // priming would be pointless anyway.
-    function fetchSysPrompt() {
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: "GET",
-                url: AGENT_URL + "/prompt",
-                headers: AGENT_HEADERS,
-                timeout: 15000,
-                onload: res => {
-                    let data;
-                    try { data = JSON.parse(res.responseText); }
-                    catch { return reject("invalid JSON from agent: " + res.responseText.substring(0, 200)); }
-                    if (typeof data.prompt === "string" && data.prompt) resolve(data.prompt);
-                    else reject(data.error || "agent returned no prompt");
-                },
-                onerror: () => reject("agent unreachable - is `python agent.py` running?"),
-                ontimeout: () => reject("agent timeout")
-            });
+    async function fetchSysPrompt() {
+        const res = await agentRequest({
+            method: "GET",
+            url: AGENT_URL + "/prompt",
+            timeout: 15000
         });
+        let data;
+        try { data = JSON.parse(res.responseText); }
+        catch { throw "invalid JSON from agent: " + res.responseText.substring(0, 200); }
+        if (typeof data.prompt === "string" && data.prompt) return data.prompt;
+        throw data.error || "agent returned no prompt";
     }
 
     async function primeChat() {
@@ -977,8 +1071,7 @@
         const mergedCalls = [];
         const mergedIds = [];
         for (const entry of batched) {
-            if (entry.commandId && !entry.commandId.startsWith('auto_')
-                && hasBeenExecuted(entry.commandId)) continue;
+            if (entry.commandId && hasBeenExecuted(entry.commandId)) continue;
             mergedCalls.push(...entry.calls);
             mergedIds.push(entry.commandId);
         }
@@ -987,26 +1080,20 @@
         console.log(`🚀 [BATCH via ${source}] ${mergedCalls.length} calls from ${mergedIds.length} payload(s)`, mergedCalls);
 
         try {
-            const result = await new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method: "POST",
-                    url: AGENT_URL,
-                    headers: AGENT_HEADERS,
-                    data: JSON.stringify({ calls: mergedCalls }),
-                    timeout: 120000,
-                    onload: res => {
-                        try { resolve(JSON.parse(res.responseText)); }
-                        catch { reject("Invalid JSON from agent: " + res.responseText.substring(0, 200)); }
-                    },
-                    onerror: err => reject(err),
-                    ontimeout: () => reject("Agent timeout (120s)")
-                });
+            const res = await agentRequest({
+                method: "POST",
+                url: AGENT_URL,
+                data: JSON.stringify({ calls: mergedCalls }),
+                timeout: 120000
             });
+            let result;
+            try { result = JSON.parse(res.responseText); }
+            catch { throw "Invalid JSON from agent: " + res.responseText.substring(0, 200); }
 
             console.log("✅ [BATCH] Agent responded:", result);
 
             for (const id of mergedIds) {
-                if (id && !id.startsWith('auto_')) markAsExecuted(id);
+                if (id) markAsExecuted(id);
             }
             pruneKeys();
 
@@ -1064,7 +1151,9 @@
                 calls = p.commands.map(c => ({ tool: 'bash', cmd: c }));
             if (!calls) return false;
             if (parsed.repaired) console.log('🔧 [STREAM] Payload was malformed and repaired - verify the result');
-            out.push({ calls, commandId: p.id || `auto_${Date.now()}_${out.length}` });
+            calls = dropsShellWhenRepaired(calls, parsed.repaired, '[STREAM]');
+            if (!calls.length) return false;
+            out.push({ calls, commandId: p.id || contentId(calls) });
             return true;
         };
 

@@ -149,6 +149,85 @@ ck("parse_roots splits on the path separator",
 ck("parse_roots falls back to the defaults when empty",
    tools.parse_roots("") == tools.parse_roots(None) != [])
 
+print("\n== the default sandbox is the directory you start in ==")
+# It used to be the whole home tree: every project, every key, every browser
+# profile, for someone who typed one command to try the thing out.
+here = os.getcwd().replace("\\", "/")
+ck("the default is the working directory alone",
+   tools.parse_roots(None) == [here], tools.parse_roots(None))
+ck("...not the home tree",
+   os.path.expanduser("~").replace("\\", "/").lower() not in
+   [r.lower() for r in tools.parse_roots(None)])
+tools.set_roots([here])
+ck("within_roots agrees with the tools' own check",
+   tools.within_roots(here) and not tools.within_roots("C:/Windows"))
+ck("...and sees a subdirectory of a root as inside it",
+   tools.within_roots(here + "/bridge"))
+tools.set_roots([WORK])
+
+print("\n== links cannot walk out of the sandbox ==")
+# Not an exotic attack: `mklink /J` needs no privileges on Windows, and real
+# project trees already carry links - pnpm fills node_modules with them, parts
+# of AppData and OneDrive are reparse points. The allowlist compares strings,
+# so a link inside a root is inside the sandbox by name and outside it in fact.
+LINKS = os.path.join(WORK, "linktest")
+IN_DIR = os.path.join(LINKS, "inside")
+OUT_DIR = os.path.join(LINKS, "outside")
+os.makedirs(IN_DIR, exist_ok=True)
+os.makedirs(OUT_DIR, exist_ok=True)
+open(os.path.join(OUT_DIR, "secret.txt"), "w").write("TOP SECRET\n")
+
+def make_link(link, target):
+    """A junction on Windows (no privileges needed), a symlink elsewhere."""
+    try:
+        if os.name == "nt":
+            import subprocess
+            subprocess.run(["cmd", "/c", "mklink", "/J", link, target],
+                           capture_output=True, check=True)
+        else:
+            os.symlink(target, link)
+        return os.path.exists(link)
+    except Exception:
+        return False
+
+escape = os.path.join(IN_DIR, "escape")
+if not make_link(escape, OUT_DIR):
+    print("  SKIP  this platform would not create a link")
+else:
+    tools.set_roots([IN_DIR])
+    esc = escape.replace("\\", "/")
+    r = dispatch({"tool": "read", "path": esc + "/secret.txt"})
+    ck("reading through a link out of the sandbox is refused",
+       not r["ok"] and "outside allowed roots" in r["error"], r)
+    r = dispatch({"tool": "write", "path": esc + "/planted.txt", "lines": ["owned"]})
+    ck("writing through it is refused", not r["ok"], r)
+    ck("...and nothing landed on the far side",
+       not os.path.exists(os.path.join(OUT_DIR, "planted.txt")))
+    r = dispatch({"tool": "list", "path": esc})
+    ck("listing through it is refused", not r["ok"], r)
+    dispatch({"tool": "write", "path": IN_DIR.replace("\\", "/") + "/carry.txt", "lines": ["x"]})
+    r = dispatch({"tool": "move", "path": IN_DIR.replace("\\", "/") + "/carry.txt",
+                  "to": esc + "/carry.txt"})
+    ck("moving a file out through it is refused", not r["ok"], r)
+    # The guard must bound by where a path RESOLVES, not punish links as such:
+    # a link pointing back inside the sandbox is still inside it.
+    inner = os.path.join(IN_DIR, "sub")
+    os.makedirs(inner, exist_ok=True)
+    if make_link(os.path.join(IN_DIR, "friendly"), inner):
+        r = dispatch({"tool": "write",
+                      "path": IN_DIR.replace("\\", "/") + "/friendly/ok.txt",
+                      "lines": ["fine"]})
+        ck("a link that stays inside the sandbox still works", r["ok"], r)
+    # Deleting a root through an alias for it must be refused too.
+    alias = os.path.join(LINKS, "alias")
+    if make_link(alias, IN_DIR):
+        tools.set_roots([IN_DIR, LINKS])
+        r = dispatch({"tool": "delete", "path": alias.replace("\\", "/"), "recursive": True})
+        ck("deleting an allowed root through an alias is refused",
+           not r["ok"] and "allowed root" in r["error"], r)
+        ck("...and the root is still there", os.path.isdir(IN_DIR))
+    tools.set_roots([WORK])
+
 print("\n== the sandbox as the model is told about it ==")
 filled = agent.build_prompt("before\n{{WORKSPACE}}\nafter", [second])
 ck("the served prompt names every allowed directory", second in filled, filled)
@@ -188,14 +267,17 @@ ck("plain arguments become the sandbox", agent.parse_args([second]).dirs == [sec
 
 tools.set_roots(saved)
 
-print("\n== --no-bash removes the shell, not just the mention of it ==")
-# The allowlist bounds the file tools; bash was never bounded by anything. With
-# it gone the sandbox is the whole boundary, so this flag is the difference
-# between a real one and a bound on twelve tools out of thirteen.
+print("\n== there is no shell unless it is asked for ==")
+# The allowlist bounds the file tools; bash is the one tool no directory list
+# can bound. Loading it by default made the sandbox a bound on twelve tools out
+# of thirteen, so it is opt-in.
 tools.set_roots([WORK])
-ck("bash is present by default", "bash" in tools.TOOLS)
-ck("--no-bash is off unless asked", agent.parse_args([second]).no_bash is False)
-ck("--no-bash parses", agent.parse_args([second, "--no-bash"]).no_bash is True)
+ck("a plain run asks for no shell", agent.parse_args([second]).bash is False)
+ck("--bash asks for one", agent.parse_args([second, "--bash"]).bash is True)
+# 1.0 shipped --no-bash for this behaviour. It is the default now, so it has to
+# keep parsing rather than break a shortcut somebody saved.
+ck("--no-bash still parses, as a no-op", agent.parse_args([second, "--no-bash"]).bash is False)
+ck("--bash with --no-bash is refused", rejects([second, "--bash", "--no-bash"]))
 
 ck("disable_tools reports what it removed", tools.disable_tools(["bash"]) == ["bash"])
 ck("...and removing it twice is not an error", tools.disable_tools(["bash"]) == [])
@@ -223,6 +305,31 @@ ck("with bash, the prompt is left alone",
    "Escape hatch. Runs through" in yb and "bash is NOT bounded" in yb)
 ck("...and it is otherwise the same prompt",
    yb.count("── ") == nb.count("── "), f"{yb.count('── ')} vs {nb.count('── ')}")
+
+# What the model is told and what dispatch will run are the same fact, read off
+# the registry. A flag tracked alongside it could disagree with it.
+ck("no_shell() follows the registry, not a flag", agent.no_shell() is True)
+tools.TOOLS["bash"] = tools.t_bash
+ck("...and follows it back", agent.no_shell() is False)
+
+# The real entry point, not just the parser: a default run must leave no shell
+# behind it. This is the finding the flag flip exists to close.
+def tools_after(argv):
+    tools.TOOLS["bash"] = tools.t_bash      # a fresh registry each time
+    saved_argv, sys.argv = sys.argv, ["agent.py"]
+    try:
+        args = agent.parse_args(argv)
+        if not args.bash:
+            tools.disable_tools(["bash"])
+    finally:
+        sys.argv = saved_argv
+    return set(tools.TOOLS)
+
+ck("a plain run loads no shell", "bash" not in tools_after([]))
+ck("naming directories still loads no shell", "bash" not in tools_after([second]))
+ck("--all does not smuggle one back in", "bash" not in tools_after(["--all"]))
+ck("--bash is the only way to get one", "bash" in tools_after(["--bash"]))
+ck("the other twelve are untouched either way", len(tools_after([])) == 12)
 
 tools.TOOLS["bash"] = tools.t_bash          # the suite below expects all 13
 
@@ -270,10 +377,39 @@ ck("a request for someone else's host is refused",
    hit(body=EVIL, headers=dict(OK_H, Host="evil.example")) == 403)
 ck("still nothing was written", not os.path.exists(MARK))
 
-ck("the userscript's own request is served", hit(body=EVIL, headers=OK_H) == 200)
+print("\n== pairing: the token nobody has to paste ==")
+# The header stops web pages but cannot tell one LOCAL program from another.
+# The agent mints a token per run and gives it away once, to whoever asks
+# first; the userscript asks by itself. The race is a single moment at startup
+# rather than a door open all run, and losing it is loud.
+ck("the header alone is no longer enough", hit(body=EVIL, headers=OK_H) == 403)
+ck("...and that call did not run either", not os.path.exists(MARK))
+
+def paired_token():
+    r = urllib.request.Request(BASE + "/pair", method="GET")
+    for k, v in OK_H.items():
+        r.add_header(k, v)
+    with contextlib.redirect_stdout(io.StringIO()):
+        with urllib.request.urlopen(r, timeout=10) as resp:
+            return json.load(resp).get("token")
+
+TOKEN = paired_token()
+ck("pairing hands out a token", isinstance(TOKEN, str) and len(TOKEN) > 20)
+ck("the token is this run's", TOKEN == agent.TOKEN)
+FULL_H = dict(OK_H, **{agent.TOKEN_HEADER: TOKEN})
+
+ck("a request carrying it is served", hit(body=EVIL, headers=FULL_H) == 200)
 ck("...and it really did run", os.path.exists(MARK))
-ck("GET /health needs the header too", hit("/health", "GET") == 403)
-ck("GET /health is served with it", hit("/health", "GET", OK_H) == 200)
+ck("a wrong token is refused",
+   hit(body=EVIL, headers=dict(OK_H, **{agent.TOKEN_HEADER: "not-the-token"})) == 403)
+# Whoever asks second does not get a second key to the same door.
+ck("pairing twice is refused", hit("/pair", "GET", OK_H) == 409)
+ck("GET /health needs the token too", hit("/health", "GET", OK_H) == 403)
+ck("GET /health is served with it", hit("/health", "GET", FULL_H) == 200)
+ck("GET /prompt is served with it", hit("/prompt", "GET", FULL_H) == 200)
+# A page still cannot reach /pair: it is behind the same header and Host checks.
+ck("a page cannot pair either", hit("/pair", "GET", JSON_H) == 403)
+ck("...nor from a rebound host", hit("/pair", "GET", dict(OK_H, Host="evil.example")) == 403)
 
 srv.shutdown()
 tools.set_roots(saved)

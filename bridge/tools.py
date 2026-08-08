@@ -70,15 +70,18 @@ def _covers(path, start, end):
 # might make. Bounding WHERE those tools can act is the difference between a bad
 # suggestion and an overwritten system directory.
 #
-# Default: the user's home tree plus C:/temp. That covers ordinary project work
-# while excluding C:/Windows, Program Files, and other users. Override with
-# BRIDGE_ROOTS as an os.pathsep-separated list; set BRIDGE_ROOTS=* to disable
-# (and accept that read/write/edit can then touch anything this account can).
+# Default: the directory you started the agent in. Nothing else.
+#
+# It used to be the whole home tree, which is to say every project, every SSH
+# key, every browser profile and every document, for someone who typed one
+# command to try the thing out. A default should be the narrow choice; the wide
+# one is what arguments are for. Name directories on the command line, or set
+# BRIDGE_ROOTS as an os.pathsep-separated list, or BRIDGE_ROOTS=* to disable the
+# sandbox entirely and accept that the file tools reach whatever this account
+# can.
 
 def _default_roots():
-    home = os.path.expanduser("~").replace('\\', '/')
-    roots = [home, "C:/temp", os.environ.get("TEMP", "").replace('\\', '/')]
-    return [r for r in roots if r]
+    return [os.getcwd().replace('\\', '/')]
 
 
 def normalise_roots(paths):
@@ -116,13 +119,38 @@ def set_roots(roots):
 ALLOWED_ROOTS = parse_roots(os.environ.get("BRIDGE_ROOTS"))
 
 
+def _resolve(p):
+    """
+    p with every symlink, junction and reparse point followed.
+
+    The allowlist compares strings, so without this a link INSIDE a root that
+    points outside it is inside the sandbox by name and outside it in fact -
+    and read, write, move and delete all follow it. This is not exotic: a
+    junction needs no privileges to create on Windows, and ordinary project
+    trees already carry links (pnpm fills node_modules with them, OneDrive and
+    parts of AppData are reparse points). Resolving only the components that
+    exist is enough, because a file about to be created inherits the resolution
+    of the directory it lands in.
+
+    What this does NOT fix is the race: a path checked here and opened a moment
+    later could be re-pointed in between. Closing that needs the check and the
+    open to be the same operation, which the stdlib file APIs do not offer.
+    """
+    try:
+        return os.path.realpath(p).replace('\\', '/')
+    except (OSError, ValueError):
+        # A path the OS will not even resolve cannot be shown to be inside a
+        # root, and _within_roots below treats "unknown" as "outside".
+        return p
+
+
 def _within_roots(p):
     """True if p sits inside one of the allowed roots (case-insensitive on Windows)."""
     if ALLOWED_ROOTS is None:
         return True
-    q = p.lower().rstrip('/')
+    q = _resolve(p).lower().rstrip('/')
     for root in ALLOWED_ROOTS:
-        r = root.lower().rstrip('/')
+        r = _resolve(root).lower().rstrip('/')
         if q == r or q.startswith(r + '/'):
             return True
     return False
@@ -545,7 +573,10 @@ def t_delete(path=None, recursive=False, **_):
     p = _norm(path)
     if not os.path.exists(p):
         return _err(f"no such path: {p}")
-    if ALLOWED_ROOTS and any(p.lower().rstrip('/') == r.lower().rstrip('/') for r in ALLOWED_ROOTS):
+    # Resolved on both sides, or a link pointing at a root deletes the root
+    # while not looking like it by name.
+    if ALLOWED_ROOTS and any(_resolve(p).lower().rstrip('/') == _resolve(r).lower().rstrip('/')
+                             for r in ALLOWED_ROOTS):
         return _err(f"refusing to delete an allowed root itself: {p}")
 
     if os.path.isdir(p):
@@ -632,6 +663,11 @@ def _check_paths(call):
                         hint="allowed: " + ", ".join(ALLOWED_ROOTS or []) +
                              " (set BRIDGE_ROOTS to change, or BRIDGE_ROOTS=* to disable)")
     return None
+
+
+def within_roots(path):
+    """Public form of the allowlist check, for callers outside this module."""
+    return _within_roots(_norm(path))
 
 
 def disable_tools(names):

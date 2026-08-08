@@ -2,8 +2,9 @@
 
 Local tools for any AI chat. The model emits a JSON block; a userscript reads it
 out of the chat's response stream, POSTs it to a local agent, and pastes the
-result back into the conversation. The chat gets typed file and shell tools on
-your machine, with no API key and no extension beyond a userscript manager.
+result back into the conversation. The chat gets typed file tools on your
+machine — and a shell too, if you ask for one — with no API key and no extension
+beyond a userscript manager.
 
 **The AI is the chat website you already use, not a CLI or an API.** There is no
 model running here and no key to supply — you drive it by typing in ChatGPT or
@@ -16,8 +17,9 @@ are replayed from captured live traffic by the test suite, and a sixth was
 verified live — see [`docs/SITES.md`](docs/SITES.md).
 
 > **Read the [safety model](#safety-model) before you run this.** The agent gives
-> a chat window real file access and an unsandboxed shell on the machine it runs
-> on. That is the point of it, and it is also the risk.
+> a chat window real file access on the machine it runs on — bounded to
+> directories you name, and with no shell unless you pass `--bash`. That is the
+> point of it, and it is also the risk.
 
 ## Requirements
 
@@ -48,21 +50,24 @@ can act inside them and nowhere else, and the model is told exactly what they
 are when you prime a chat.
 
 ```
-python agent.py                        # default: your home tree + C:/temp
+python agent.py                        # default: the directory you are in
 python agent.py C:/work/api            # only this project
 python agent.py C:/work/api D:/notes   # several directories
+python agent.py C:/work/api --bash     # ...and give it a shell
 python agent.py --all                  # no sandbox at all
-python agent.py C:/work/api --no-bash  # no shell: the sandbox is the real boundary
 python agent.py C:/work/api --port 4000
 ```
 
-**`--no-bash` is the setting that makes the sandbox mean something.** The
-allowlist bounds the twelve file tools; `bash` was never bounded by anything, so
-while a shell is loaded the sandbox constrains twelve tools out of thirteen.
-Drop it and the directories above become the whole of what the chat can reach.
-The cost is that it can no longer run your tests or your program — it edits, and
-you run. The served prompt is rewritten to match, so the model is not told about
-a tool it does not have.
+**There is no shell unless you ask for one.** `bash` is the single tool no
+directory list can bound — a shell command reaches whatever your account can,
+wherever it lives — so loading it made the sandbox a bound on twelve tools out
+of thirteen rather than a boundary. It is off by default. Without it, the
+directories above really are the whole of what a chat can reach.
+
+`--bash` loads it back when you want the model to run your tests or your build.
+That is a real convenience and a real escalation; take it deliberately, and
+prefer a narrow sandbox when you do. The served prompt is rewritten to match
+whichever way you run, so the model is never told about a tool it does not have.
 
 A directory that does not exist is rejected rather than silently becoming a
 sandbox that allows nothing. `--all` refuses to take directories, because then
@@ -79,15 +84,15 @@ intended before you start a chat:
   listening http://localhost:3456
   pid       5896
   sandbox   C:/work/api
-  tools     13  bash copy delete edit glob grep insert_lines list mkdir ...
+  shell     none - bash was not loaded
+  tools     12  copy delete edit glob grep insert_lines list mkdir move ...
 ```
 
-With `--no-bash` it says so outright, and the tool count drops to 12:
+Run with `--bash` and the shell line disappears, because there is a shell:
 
 ```
   sandbox   C:/work/api
-  shell     none - bash was not loaded
-  tools     12  copy delete edit glob grep insert_lines list mkdir move ...
+  tools     13  bash copy delete edit glob grep insert_lines list mkdir ...
 ```
 
 ### 3. Install the userscript
@@ -119,10 +124,14 @@ it a task.
 The browser console shows a badge reading `anybridge v1.0 <site>` on an active
 site. From there:
 
-- `curl -H "X-Anybridge: 1" http://localhost:3456/health` — the agent is up and
-  lists its tools. The header is required; see the safety model for why.
-- Ask the chat to list one of your sandbox directories. The agent console prints
-  every call it runs, so you can watch it happen.
+- The agent console prints `paired with a browser` the first time the userscript
+  reaches it, and then every call it runs. That is the quickest confirmation
+  both halves are alive.
+- Ask the chat to list one of your sandbox directories and watch it appear.
+
+Do **not** test the agent by curling it. The token is handed out once per run,
+so a `curl .../pair` takes the pairing your browser needs and the bridge stops
+working until you restart the agent.
 
 If nothing fires, the console log tells you which half is quiet: no badge means
 the userscript is not active on that site, and a badge with no agent traffic
@@ -142,10 +151,11 @@ agent.py              HTTP entry point - this is what you run
                       POST /  runs a batch of calls
                       GET /health   agent status and tool list
                       GET /prompt   the system prompt, workspace filled in
+                      GET /pair     hands the browser this run's token, once
 bridge/               the tool layer
-  tools.py            13 typed tools: read, write, edit, replace_lines,
+  tools.py            12 file tools: read, write, edit, replace_lines,
                       insert_lines, list, glob, grep, mkdir, move, copy,
-                      delete, bash - plus the directory allowlist
+                      delete - plus bash behind --bash, and the allowlist
   render.py           turns results into the plain text pasted back
   console.py          the agent's terminal output
 userscript/           the browser half, including the per-site stream adapters
@@ -158,8 +168,8 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 132 tests + 5 live captures replayed
-python tests/run_all.py --mutate   # also check the tests can actually fail (13 mutations)
+python tests/run_all.py            # 172 tests + 5 live captures replayed
+python tests/run_all.py --mutate   # also check the tests can actually fail (14 mutations)
 python tests/run_all.py --bench    # throughput
 ```
 
@@ -170,15 +180,26 @@ and only mutation testing showed it.
 ## Safety model
 
 - **Directory allowlist.** File tools are confined to the directories given to
-  `agent.py`, defaulting to your home tree plus `C:/temp`. Narrow it per project
-  by naming directories on the command line.
+  `agent.py`, defaulting to the one you start it in. Links are resolved before
+  the check, so a symlink or junction inside a root cannot walk out of it —
+  which matters because ordinary project trees are full of them.
+- **No shell unless asked.** `bash` is the one tool no directory list can bound,
+  so it is loaded only with `--bash`.
+- **Only your browser can reach the agent.** Web pages are locked out by a
+  required header they cannot send plus a `Host` check; local programs by a
+  token the agent hands out once per run, which the userscript claims by itself.
 - **Read before write.** Modifying a file requires having read the lines being
   changed — not merely having opened the file once. Overwriting a whole file
   requires having read all of it.
 - **Delete is strictest.** A file must be known before it is destroyed; a
   non-empty directory needs explicit `"recursive": true`. An allowed root cannot
   be deleted at all.
-- **Replay protection.** Each block carries an id and executes once per chat.
+- **Replay protection.** Each block executes once per chat, by its `id` — or,
+  when it has none, by a hash of the calls themselves, so an id-less block
+  cannot run again just because its text came back round on a reload.
+- **A repaired payload may edit, but may not run a shell.** Malformed JSON gets
+  one repair attempt; since that rewrites the text, a `bash` call which only
+  parsed after repair is refused rather than guessed at.
 - **Reasoning traces are never executed.** Every adapter drops the model's
   private thinking before the payload scan. On some sites reasoning and answer
   share one field, so this is the adapter's main job.
@@ -187,11 +208,12 @@ and only mutation testing showed it.
   block. The script records what it primed a chat with and refuses to act on
   anything that came from it.
 
-**`bash` is not sandboxed** — so run with `--no-bash` if you want the allowlist
-to be a real boundary. While a shell is loaded, a command reaches anything your
-account can, whatever directories you passed to `agent.py`; bounding a shell
-needs a container, not a path check. `--no-bash` removes the tool outright, and
-the twelve remaining tools are all bounded by the allowlist.
+**`bash` is not sandboxed, which is why it is off by default.** A shell command
+reaches anything your account can, whatever directories you passed to
+`agent.py`; bounding a shell needs a container, not a path check. The twelve
+tools you get without it are all bounded by the allowlist. Passing `--bash`
+loads the one that is not — worth doing when you want tests run, worth doing
+knowingly.
 
 Even then, be honest about what a sandbox of files buys you. Anything inside it
 that later gets *executed* — a script you run afterwards, a `.bashrc`, a
@@ -216,12 +238,24 @@ these tools run shell commands. Two things stop that:
   cannot set headers at all — forms, `no-cors` fetch — which are refused for
   lacking it. The userscript is unaffected: `GM_xmlhttpRequest` is privileged
   and never preflights.
+- **Every request must also carry a token**, which the agent mints per run and
+  hands out exactly once, to the first caller that asks. The userscript asks by
+  itself — there is nothing to paste — and asks again when the agent restarts
+  and its stored token stops working. That narrows the window for another local
+  program from the whole run to one moment at startup, and losing the race is
+  loud rather than silent: the bridge stops working and the console says another
+  client took the pairing. It is not a wall against local malware, and nothing
+  can be: a program running as you can read your files without this agent's
+  help.
 - **The `Host` header must be localhost.** Otherwise an attacker's domain whose
   DNS answers `127.0.0.1` is same-origin with the agent by the browser's own
   rules, and an origin allowlist would prove nothing. That is DNS rebinding.
 
 The agent also sends no `Access-Control-Allow-Origin` header at all, so no site
 can read a reply even if it manages to provoke one.
+
+For the full threat model — including what is deliberately *not*
+defended — see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 

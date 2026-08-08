@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -26,14 +27,17 @@ for _stream in (sys.stdout, sys.stderr):
 from bridge import console as ui                      # noqa: E402
 from bridge.render import render_results              # noqa: E402
 from bridge.tools import (TOOLS, disable_tools, dispatch,        # noqa: E402
-                          parse_roots, set_roots)
+                          parse_roots, set_roots, within_roots)
 
 VERSION = "1.0"
 
-# Both are settled by the command line in main() before anything serves.
+# Both are settled by the command line in main() before anything serves. Whether
+# a shell is loaded is NOT tracked separately: it is read off the tool registry
+# by no_shell(), so the banner and the model's prompt cannot drift apart from
+# what dispatch will actually run.
 PORT = int(os.environ.get("BRIDGE_PORT", 3456))
 ROOTS = parse_roots(os.environ.get("BRIDGE_ROOTS"))   # None means unrestricted
-NO_BASH = False                                       # --no-bash drops the shell
+
 
 # Served to the userscript so a chat can be primed from the browser. The agent
 # owns this file, so what the model is told it can do always matches the tool
@@ -48,6 +52,13 @@ STARTED = time.time()
 WORKSPACE_PLACEHOLDER = "{{WORKSPACE}}"
 
 
+def no_shell():
+    """True when this run has no bash tool. Read from the registry, never
+    from a flag: the prompt telling the model there is no shell and dispatch
+    refusing to run one must be the same fact."""
+    return "bash" not in TOOLS
+
+
 def parse_args(argv):
     ap = argparse.ArgumentParser(
         prog="agent.py",
@@ -55,28 +66,40 @@ def parse_args(argv):
                     "are the sandbox: the file tools may act inside them and "
                     "nowhere else.",
         epilog="examples:\n"
-               "  python agent.py                          home tree + C:/temp\n"
+               "  python agent.py                          this directory, no shell\n"
                "  python agent.py C:/work/api              only that project\n"
                "  python agent.py C:/work/api D:/notes     two directories\n"
-               "  python agent.py --all                    no sandbox at all\n"
-               "  python agent.py C:/work/api --no-bash    no shell at all\n"
+               "  python agent.py C:/work/api --bash       add the shell back\n"
+               "  python agent.py --all --bash             no sandbox and a shell: everything\n"
+               "\n"
+               "There is no shell unless you ask for one. bash is the only tool the\n"
+               "directory sandbox cannot bound, so it is off by default.\n"
                "\n"
                "BRIDGE_ROOTS and BRIDGE_PORT still work; arguments win over both.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dirs", nargs="*", metavar="DIR",
                     help="a directory the file tools may touch. Repeatable. "
-                         "Defaults to your home tree plus C:/temp.")
+                         "Defaults to the directory you start the agent in.")
     ap.add_argument("--all", "--unrestricted", dest="unrestricted",
                     action="store_true",
                     help="disable the sandbox: file tools may reach anything "
-                         "this account can. bash is unbounded either way.")
+                         "this account can.")
+    ap.add_argument("--bash", dest="bash", action="store_true",
+                    help="load the bash tool. It is the one tool no directory "
+                         "list can bound - a shell command reaches whatever "
+                         "this account can, wherever it lives. Off unless you "
+                         "ask.")
+    # --no-bash was how you got this behaviour in 1.0. It is the default now,
+    # so accept it and do nothing rather than failing a command someone has in
+    # a shortcut or a script.
     ap.add_argument("--no-bash", dest="no_bash", action="store_true",
-                    help="drop the bash tool. Without a shell the directory "
-                         "allowlist is the whole boundary, not a bound on "
-                         "twelve tools out of thirteen.")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--port", type=int, default=PORT,
                     help=f"port to listen on (default {PORT})")
     args = ap.parse_args(argv)
+
+    if args.bash and args.no_bash:
+        ap.error("--bash and --no-bash contradict each other")
 
     if args.unrestricted and args.dirs:
         # Silently letting one win would mean the banner and the model's prompt
@@ -205,10 +228,45 @@ def normalize_calls(body):
 # Note what is deliberately absent: Access-Control-Allow-Origin. Advertising
 # "*" told every site on the internet it could read the replies.
 AUTH_HEADER = "X-Anybridge"
+TOKEN_HEADER = "X-Anybridge-Token"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+# What the checks above cannot see is WHICH local program is calling. Any
+# process running as you can send the header, so the tools were reachable by
+# anything on the machine. A pasted secret would settle it, and a secret nobody
+# pastes is the next best thing:
+#
+#   * The agent mints a token at startup and hands it out exactly ONCE, to the
+#     first caller that asks (the userscript asks automatically, on its first
+#     call and whenever its stored token stops working).
+#   * Every later request must carry it.
+#
+# So the race is over a single moment at startup rather than a door left open
+# for the whole run, and losing it is loud rather than silent: the bridge stops
+# working and the console says another client took the pairing. Restart the
+# agent and it re-pairs.
+#
+# Be clear about the limit. A program already running as you can read your
+# files and start its own shell without this agent's help, so this is not a
+# wall against local malware - nothing running as you can be. It stops casual
+# and accidental access, and it makes deliberate access visible.
+TOKEN = secrets.token_urlsafe(24)
+PAIRED = False
 
 
 class AgentHandler(BaseHTTPRequestHandler):
+    def _pair(self):
+        """Hand the token to the first caller that asks. Once."""
+        global PAIRED
+        if PAIRED:
+            ui.note("a second client asked to pair and was refused - if the "
+                    "bridge has stopped working, restart the agent", ui.C.RED)
+            self._respond({"error": "already paired"}, code=409)
+            return
+        PAIRED = True
+        ui.note("paired with a browser", ui.C.GREEN)
+        self._respond({"token": TOKEN, "version": VERSION})
+
     def _authorised(self):
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip().lower()
         # A missing Host is HTTP/1.0 or a hand-rolled client, never a browser.
@@ -221,13 +279,22 @@ class AgentHandler(BaseHTTPRequestHandler):
             ui.note(f"refused a request from {origin} with no {AUTH_HEADER} "
                     f"header", ui.C.RED)
             return False
+        # /pair is the one request that may arrive without the token, since it
+        # is how a caller gets one. compare_digest keeps a wrong token from
+        # being narrowed down a character at a time.
+        if self.path != "/pair" and not secrets.compare_digest(
+                self.headers.get(TOKEN_HEADER) or "", TOKEN):
+            ui.note("refused a request with a missing or stale token", ui.C.RED)
+            return False
         return True
 
     def do_GET(self):
         if not self._authorised():
             self._respond({"error": "forbidden"}, code=403)
             return
-        if self.path == "/health":
+        if self.path == "/pair":
+            self._pair()
+        elif self.path == "/health":
             self._respond({"status": "online", "name": "anybridge",
                            "version": VERSION, "tools": sorted(TOOLS)})
         elif self.path == "/prompt":
@@ -241,10 +308,11 @@ class AgentHandler(BaseHTTPRequestHandler):
                 self._respond({"error": f"cannot read the system prompt: {e}"},
                               code=500)
                 return
-            text = build_prompt(text, ROOTS, NO_BASH)
+            text = build_prompt(text, ROOTS, no_shell())
             ui.note(f"served the system prompt ({len(text)} chars)")
-            self._respond({"prompt": text, "version": VERSION,
-                           "roots": ROOTS if ROOTS is not None else "*"})
+            # The roots are inside the prompt text where the model needs them.
+            # Repeating them as a JSON field only made them easier to lift.
+            self._respond({"prompt": text, "version": VERSION})
         else:
             self._respond({"error": "not found"}, code=404)
 
@@ -320,11 +388,16 @@ class BridgeServer(HTTPServer):
 
 
 def main(argv=None):
-    global PORT, ROOTS, NO_BASH
+    global PORT, ROOTS
     args = parse_args(sys.argv[1:] if argv is None else argv)
     PORT = args.port
-    NO_BASH = args.no_bash
-    if NO_BASH:
+    # A shell is opt-in. The allowlist bounds the twelve file tools and cannot
+    # bound this one, so loading it by default made the sandbox a bound on
+    # twelve tools out of thirteen rather than a boundary.
+    # A shell is opt-in. The allowlist bounds the twelve file tools and cannot
+    # bound this one, so loading it by default made the sandbox a bound on
+    # twelve tools out of thirteen rather than a boundary.
+    if not args.bash:
         disable_tools(["bash"])
     # The command line wins over BRIDGE_ROOTS; with neither, ROOTS keeps the
     # default it was built with at import.
@@ -336,7 +409,18 @@ def main(argv=None):
         ROOTS = set_roots(ROOTS)
 
     ui.banner(VERSION, PORT, ROOTS or [], TOOLS, unrestricted=ROOTS is None,
-              no_bash=NO_BASH)
+              no_bash=no_shell())
+
+    # Starting the agent from its own directory - the obvious thing to do after
+    # cloning - puts agent.py, the tool layer and the userscript inside the
+    # sandbox. A chat could then edit the guards that are bounding it, and the
+    # next run would be bounded by whatever it wrote.
+    if within_roots(os.path.dirname(os.path.abspath(__file__))):
+        ui.note("this sandbox contains the bridge's own source, so a chat can "
+                "edit the guards that bound it", ui.C.YELLOW)
+        ui.note("name a project directory instead: python agent.py C:/path/to/project",
+                ui.C.YELLOW)
+        print()
     try:
         server = BridgeServer(("127.0.0.1", PORT), AgentHandler)
     except OSError as e:

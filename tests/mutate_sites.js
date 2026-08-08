@@ -64,6 +64,13 @@ const MUTATIONS = [
     // call to execute, and burns the id of the model's first real block.
     ['prime: act on payloads found in the injected system prompt',
      [['if (isPrimerText(text)) {', 'if (false) {']], null, 'test_scan.js'],
+
+    // Back to a clock-derived id, which is unique on every scan - so the replay
+    // guard can neither recognise nor record it, and an id-less payload runs
+    // again every time its text comes back round.
+    ['replay: give an id-less payload a fresh id on every sighting',
+     [['const commandId = payload.id || contentId(calls);',
+       'const commandId = payload.id || `auto_${Date.now()}`;']], null, 'test_scan.js'],
 ];
 
 let ok = 0, bad = 0;
