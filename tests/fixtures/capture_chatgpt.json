@@ -1,0 +1,625 @@
+{
+  "site": "chatgpt",
+  "url": "https://chatgpt.com/backend-api/f/conversation",
+  "via": "fetch",
+  "contentType": "text/event-stream; charset=utf-8",
+  "bytes": 6606,
+  "requests": [
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 71398,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/finalize",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 2594,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/m",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "via": "fetch",
+      "ct": "text/event-stream; charset=utf-8",
+      "status": 200,
+      "bytes": 6606,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/lat/r",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 20,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/files/library/nodes",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 26,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/m",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/telemetry/intake?ddforward=%2Fapi%2Fv2%2Flogs%3Fddsource%3Dbrowser%26dd-api-key%3Dpub1f79f8ac903a5872ae5f53026d20a77c%26dd-evp-origin-version%3D6.22.0%26dd-evp-origin%3Dbrowser%26dd-request-id%3D7b1fcb15-a08c-4f44-a094-0a2f0d71d1a6",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 24,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786153465477&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=9&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/heartbeat",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/heartbeat",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 68022,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "via": "fetch",
+      "ct": "text/event-stream; charset=utf-8",
+      "status": 200,
+      "bytes": 6605,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/lat/r",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 20,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/finalize",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 2530,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786153585496&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=10&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/m",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/telemetry/intake?ddforward=%2Fapi%2Fv2%2Flogs%3Fddsource%3Dbrowser%26dd-api-key%3Dpub1f79f8ac903a5872ae5f53026d20a77c%26dd-evp-origin-version%3D6.22.0%26dd-evp-origin%3Dbrowser%26dd-request-id%3Df5380fde-ccb2-4629-8d69-8a1bb12acbb8",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 24,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/heartbeat",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/t",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786153645504&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=1&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/m",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/heartbeat",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786153715713&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=10&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786153792152&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=2&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786154054351&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=2&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/sentinel/ping",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 15,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/statsc/flush",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 16,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 200,
+      "bytes": 384,
+      "done": true
+    },
+    {
+      "url": "https://chatgpt.com/ces/v1/rgstr?k=client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST&st=javascript-client&sv=3.32.6&t=1786154145018&sid=175eb7c5-3d88-4e58-9242-4abe0dd2a98e&ec=2&gz=1",
+      "via": "fetch",
+      "ct": "application/json",
+      "status": 202,
+      "bytes": 16,
+      "done": true
+    }
+  ]
+}

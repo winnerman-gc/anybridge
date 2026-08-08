@@ -1,0 +1,49 @@
+{
+  "sockets": [
+    {
+      "id": 0,
+      "url": "wss://notilo.kimi.com/im/v1/subscribe/ws?encoding=proto&ticket=ZPPSRR7UECN7EYHNZZVW5RBHKP",
+      "opened": 1786154327385,
+      "sent": 2,
+      "recv": 4
+    }
+  ],
+  "frames": [
+    {
+      "id": 0,
+      "dir": "in",
+      "t": 1786154331749,
+      "data": "[binary 160]"
+    },
+    {
+      "id": 0,
+      "dir": "in",
+      "t": 1786154337170,
+      "data": "[binary 163]"
+    },
+    {
+      "id": 0,
+      "dir": "in",
+      "t": 1786154338041,
+      "data": "[binary 94]"
+    },
+    {
+      "id": 0,
+      "dir": "out",
+      "t": 1786154338628,
+      "data": "18,0"
+    },
+    {
+      "id": 0,
+      "dir": "in",
+      "t": 1786154338679,
+      "data": "[binary 2]"
+    },
+    {
+      "id": 0,
+      "dir": "out",
+      "t": 1786154338679,
+      "data": "194,62,0"
+    }
+  ]
+}

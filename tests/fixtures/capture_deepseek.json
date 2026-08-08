@@ -1,0 +1,6 @@
+{
+  "site": "deepseek",
+  "url": "https://chat.deepseek.com/api/v0/chat/completion",
+  "contentType": "text/event-stream; charset=utf-8",
+  "bytes": 1921
+}

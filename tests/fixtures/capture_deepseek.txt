@@ -1,0 +1,90 @@
+event: ready
+data: {"request_message_id":13,"response_message_id":14,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1786157209.447603}
+
+data: {"v":{"response":{"message_id":14,"parent_id":13,"model":"","role":"ASSISTANT","thinking_enabled":true,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":513,"feedback":null,"inserted_at":1786157209.4359128,"search_enabled":true,"fragments":[{"id":2,"type":"THINK","content":"我们","elapsed_secs":null,"references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"只需要"}
+
+data: {"v":"按"}
+
+data: {"v":"指令"}
+
+data: {"v":"输出"}
+
+data: {"v":"给定的"}
+
+data: {"v":"JSON"}
+
+data: {"v":"。"}
+
+data: {"p":"response/fragments/-1/elapsed_secs","o":"SET","v":0.729233386}
+
+data: {"p":"response/fragments","o":"APPEND","v":[{"id":3,"type":"RESPONSE","content":"```","references":[],"stage_id":1}]}
+
+data: {"p":"response/fragments/-1/content","v":"json"}
+
+data: {"v":"\n"}
+
+data: {"v":"{\""}
+
+data: {"v":"id"}
+
+data: {"v":"\":\""}
+
+data: {"v":"pro"}
+
+data: {"v":"be"}
+
+data: {"v":"_"}
+
+data: {"v":"net"}
+
+data: {"v":"\",\""}
+
+data: {"v":"c"}
+
+data: {"v":"alls"}
+
+data: {"v":"\":["}
+
+data: {"v":"{\""}
+
+data: {"v":"tool"}
+
+data: {"v":"\":\""}
+
+data: {"v":"list"}
+
+data: {"v":"\",\""}
+
+data: {"v":"path"}
+
+data: {"v":"\":\""}
+
+data: {"v":"C"}
+
+data: {"v":":/"}
+
+data: {"v":"temp"}
+
+data: {"v":"\""}
+
+data: {"v":"}]"}
+
+data: {"v":"}\n"}
+
+data: {"v":"```"}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":603},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1786157209.858073}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+

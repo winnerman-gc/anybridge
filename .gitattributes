@@ -1,0 +1,9 @@
+# Keep LF in the working tree on every platform. The captured fixtures are
+# byte-exact records of what a provider sent, and the mutation harness matches
+# multi-line anchors in the userscript - both break under CRLF conversion.
+* text=auto eol=lf
+
+# Captured traffic is a byte-exact record of what a provider actually sent.
+# Kimi's is length-prefixed binary framing, where a rewritten newline shifts
+# every frame boundary. Never convert these.
+tests/fixtures/** -text
