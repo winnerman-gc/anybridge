@@ -108,17 +108,56 @@ remove the host.
 The generic adapter is a best effort. If a site does not work with it, add a
 proper entry to `SITES` — `host`, `urlRe` and a `frame(st, obj)` that appends to
 `st.text`. Set `urlRe: null` to skip stream interception entirely and rely on
-DOM scanning, as Gemini does.
+DOM scanning, as Gemini does. Add an `answer` selector too if you can measure
+one (see below); an adopted host has none, so on one the DOM scan still sees
+every code block on the page, including your own. Do not adopt a site you do
+not trust.
 
 On any host that is neither listed nor adopted the script does nothing at all —
 no hooks, no scanning, no logging. It matches `*://*/*` only so Ctrl+Shift+B is
 available everywhere.
+
+## Whose message is it? (`answer`)
+
+The DOM scan reads the document, and the document holds your own messages too.
+A code block being on the page never meant the model wrote it, so an adapter may
+name the container the assistant's messages live in:
+
+| Site | `answer` | The user's turn, for contrast | Verified |
+|---|---|---|---|
+| ChatGPT | `[data-message-author-role="assistant"]`, `[data-turn="assistant"]` | the same two attributes with `"user"` | live DOM, 2026-08-08 |
+| Claude | `.font-claude-response`, `[data-is-streaming]` | `[data-testid="user-message"]`, `[data-cds="UserMessage"]` | live DOM, 2026-08-08 |
+| Gemini | `model-response`, `.model-response-text`, `.presented-response-container` | `.user-query-container`, `<user-query-content>` | live DOM, 2026-08-08 |
+| Kimi | `.segment-assistant`, `.chat-content-item-assistant` | `.segment-user`, `.chat-content-item-user` | live DOM, 2026-08-08 |
+| DeepSeek | `.ds-assistant-message-main-content` | `.ds-message` only — no user-specific class | live DOM, 2026-08-08 |
+| Qwen | `.qwen-chat-message-assistant`, `.response-message-content` | `.qwen-chat-message-user`, `.chat-user-message` | live DOM, 2026-08-08 |
+| Grok | `[data-testid="assistant-message"]` | `[data-testid="user-message"]` | live DOM, 2026-08-08 |
+
+Grok is the one that matters most: it has no usable stream, so DOM scanning is
+its only path rather than a fallback.
+
+Note what the user column is for. It is **contrast, not the mechanism** — the
+`answer` selector alone excludes the user's turn on all seven, which was checked
+directly rather than assumed. Only ChatGPT's and Claude's markers ended up in
+`NOT_THE_MODEL`, since that list exists for hosts with no adapter at all.
+
+Where an adapter names one, nothing outside it is considered — default-deny, so
+a site redesign stops the DOM path rather than quietly widening it. Everywhere
+else a small subtractive list (`NOT_THE_MODEL` in the userscript) skips blocks
+sitting inside markers that several products share for the user's own turn.
+
+**Measure it, do not guess it.** The procedure that produced the row above: open
+a chat, send one message containing a fenced code block, ask for a reply
+containing one, then walk both blocks' ancestors and find what the two chains do
+NOT share. A guessed selector that matches nothing silently stops the bridge
+working on that site, and one that matches too much silently re-opens the hole.
 
 ## Fallbacks
 
 - **DOM scanning** runs when there is no stream adapter, or when the stream
   yields no payload. It is subject to virtualised code blocks (Qwen's Monaco
   editor keeps ~30 lines in the DOM), which is why the stream is preferred.
+  It only considers blocks that pass the authorship test above.
 - **XHR** is hooked alongside `fetch` for sites that stream over
   `XMLHttpRequest`.
 - **Composer injection** tries a site-specific selector, then a synthetic paste

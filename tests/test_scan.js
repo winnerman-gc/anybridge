@@ -9,7 +9,36 @@ class El {
     constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this._text = ''; this.id = ++idc; }
     set textContent(v) { this._text = v; }
     get textContent() { return this.children.length ? this.children.map(c => c.textContent).join('') : this._text; }
-    append(c) { this.children.push(c); return c; }
+    append(c) { c.parent = this; this.children.push(c); return c; }
+    setAttr(name, value) { (this.attrs || (this.attrs = {}))[name] = value; return this; }
+    // Enough of a matcher for the scan's own selectors: tag, .class, [a="v"],
+    // [class*="x" i], and comma lists of those.
+    matches(sel) {
+        return sel.split(',').map(s => s.trim()).filter(Boolean).some(one => {
+            if (one.startsWith('.')) {
+                return (this.className || '').split(/\s+/).includes(one.slice(1));
+            }
+            const m = /^\[([a-zA-Z0-9_-]+)(?:([*^$]?)=(?:"([^"]*)"|'([^']*)'))?\s*(i)?\]$/.exec(one);
+            if (m) {
+                const name = m[1];
+                const want = m[3] !== undefined ? m[3] : m[4];
+                let have = (this.attrs || {})[name];
+                if (have === undefined && name === 'class') have = this.className;
+                if (have === undefined) return false;
+                if (want === undefined) return true;              // [attr]
+                const a = m[5] ? String(have).toLowerCase() : String(have);
+                const b = m[5] ? want.toLowerCase() : want;
+                return m[2] === '*' ? a.includes(b)
+                    : m[2] === '^' ? a.startsWith(b)
+                    : m[2] === '$' ? a.endsWith(b) : a === b;
+            }
+            return this.tagName === one.toUpperCase();
+        });
+    }
+    closest(sel) {
+        for (let n = this; n; n = n.parent) if (n.matches && n.matches(sel)) return n;
+        return null;
+    }
     querySelectorAll(sel) {
         const out = [];
         if (sel.startsWith('.')) {
@@ -39,7 +68,6 @@ class El {
         return null;
     }
     getBoundingClientRect() { return { width: 100, height: 20 }; }
-    closest() { return null; }
     focus() {} addEventListener() {} dispatchEvent() {}
     click() { if (this.onclick) this.onclick(); }
     getAttribute() { return ''; }
@@ -64,7 +92,11 @@ global.document = {
 };
 global.window = {
     HTMLTextAreaElement: { prototype: {} },
-    location: { href: 'https://chat.qwen.ai/c/abc123' },
+    // Which site this run pretends to be. The default has no `answer`
+    // selector, so it exercises the subtractive filters; run_all runs the file
+    // a second time as claude.ai, which does have one, for the default-deny
+    // path. Nothing else in here is site-specific.
+    location: { href: process.env.BRIDGE_TEST_URL || 'https://chat.qwen.ai/c/abc123' },
     // Monaco writes the block's full model text here when its copy action runs.
     navigator: { clipboard: { writeText: async () => {} } },
 };
@@ -74,7 +106,30 @@ global.KeyboardEvent = class { constructor(t) { this.type = t; } };
 global.MutationObserver = class { constructor(cb) { this.cb = cb; global.__mo = cb; } observe() {} };
 
 // ---- fake GM_* ------------------------------------------------------------
+// On a site whose adapter knows where the answer lives, a block only counts if
+// it is inside that container - so the harness has to build blocks the way that
+// site does, one container per assistant turn. A host with no adapter has no
+// such container, which is the third case run_all covers.
+const ANSWER_CLASS = {
+    'chat.qwen.ai': 'qwen-chat-message-assistant',
+    'claude.ai': 'font-claude-response',
+};
+const TEST_HOST = (process.env.BRIDGE_TEST_URL || 'https://chat.qwen.ai/c/abc123').split('/')[2];
+const ANSWER = ANSWER_CLASS[TEST_HOST];
+const SITE_HAS_ANSWER = !!ANSWER;
+const SITE_IS_QWEN = TEST_HOST === 'chat.qwen.ai';   // the only Monaco site
+function answerHost() {
+    if (!ANSWER) return root;
+    const turn = root.append(new El('div'));
+    turn.className = ANSWER;
+    return turn;
+}
+
 const store = new Map();
+// A host with no adapter only works once adopted, which is how the third
+// variant reaches the no-answer-selector path. Harmless for the known sites:
+// resolveSite checks the SITES table first.
+store.set('bridge_hosts', [TEST_HOST]);
 global.GM_getValue = (k, d) => (store.has(k) ? store.get(k) : d);
 global.GM_setValue = (k, v) => store.set(k, v);
 global.GM_listValues = () => [...store.keys()];
@@ -128,7 +183,7 @@ const tick = () => tickFns.forEach(f => f());
 const sleep = () => new Promise(r => realSetTimeout(r, 20));
 
 // Real browsers fire mutations on these changes; the script keys off that.
-function mkBlock(text) { const pre = root.append(new El('pre')); const code = pre.append(new El('code')); code.textContent = text; global.__mo(); return code; }
+function mkBlock(text) { const pre = answerHost().append(new El('pre')); const code = pre.append(new El('code')); code.textContent = text; global.__mo(); return code; }
 function setText(el, text) { el.textContent = text; global.__mo(); }
 
 (async () => {
@@ -196,6 +251,9 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     tick(); await sleep(); tick(); await sleep();
     check('nested pre>code counted once', sent.length === 1 && sent[0].calls.length === 1);
 
+    // Monaco recovery belongs to the Qwen adapter, so only the Qwen run
+    // exercises it. Elsewhere there is no site.monaco and nothing to test.
+    if (SITE_IS_QWEN) {
     console.log('\n== MONACO: virtualised block, DOM truncated ==');
     sent.length = 0;
     // Reproduces the measured reality: a 72-line payload whose DOM text holds
@@ -208,7 +266,7 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     });
     const truncated = fullPayload.slice(0, 400);          // cut mid-content, unbalanced
     (function () {
-        const pre = root.append(new El('pre'));
+        const pre = answerHost().append(new El('pre'));
         pre.className = 'qwen-markdown-code';
         const hdr = pre.append(new El('div'));
         hdr.className = 'qwen-markdown-code-header-action-item';
@@ -224,6 +282,7 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
         sent.length === 1 && sent[0].calls[0].lines.length === 60);
     check('clipboard interception did not touch real clipboard',
         typeof global.window.navigator.clipboard.writeText === 'function');
+    }
 
     console.log('\n== SAFETY: rendered result containing a payload lookalike ==');
     sent.length = 0;
@@ -291,6 +350,69 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     check('a genuine payload after priming still runs',
         sent.length === 1 && sent[0].calls[0].cmd === 'echo real');
 
+    console.log('\n== a code block in YOUR OWN message is not the model talking ==');
+    // The scan reads the document, and the document holds your messages too. The
+    // containers below are the real ones, measured from a live Claude session:
+    // the user's block sits under [data-testid="user-message"], the model's
+    // under .font-claude-response - and the two ancestries share nothing.
+    sent.length = 0;
+    (function () {
+        const mine = root.append(new El('div'));
+        mine.setAttr('data-testid', 'user-message');
+        const pre = mine.append(new El('pre'));
+        const code = pre.append(new El('code'));
+        code.textContent = '{"id":"mine_1","calls":[{"tool":"bash","cmd":"echo pasted by the user"}]}';
+        global.__mo();
+    })();
+    tick(); await sleep(); tick(); await sleep(); tick(); await sleep();
+    check('a payload pasted by the user does not execute', sent.length === 0, JSON.stringify(sent));
+
+    // ...while the same payload in the assistant's own container still does.
+    sent.length = 0;
+    (function () {
+        const theirs = answerHost();
+        const pre = theirs.append(new El('pre'));
+        const code = pre.append(new El('code'));
+        code.textContent = '{"id":"theirs_1","calls":[{"tool":"bash","cmd":"echo from the model"}]}';
+        global.__mo();
+    })();
+    tick(); await sleep(); tick(); await sleep(); tick(); await sleep();
+    check('the same payload from the model does execute',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo from the model', JSON.stringify(sent));
+
+    // The other markers are subtractive and apply on every site, adapter or not.
+    for (const [attr, value] of [['data-message-author-role', 'user'], ['data-cds', 'UserMessage']]) {
+        sent.length = 0;
+        (function () {
+            // A fresh element every time: answerHost() returns the root itself
+            // where there is no answer container, and stamping a user marker on
+            // the root would mark every later block as the user's.
+            const mine = root.append(new El('div'));
+            if (ANSWER) mine.className = ANSWER;       // even inside the answer container
+            mine.setAttr(attr, value);
+            const code = mine.append(new El('pre')).append(new El('code'));
+            code.textContent = `{"id":"m_${attr}","calls":[{"tool":"bash","cmd":"echo nope"}]}`;
+            global.__mo();
+        })();
+        tick(); await sleep(); tick(); await sleep(); tick(); await sleep();
+        check(`[${attr}="${value}"] marks a block as the user's`, sent.length === 0, JSON.stringify(sent));
+    }
+
+    // On a site whose adapter knows where the answer lives, everything outside
+    // it is out of scope - default-deny rather than a list of things to skip.
+    if (SITE_HAS_ANSWER) {
+        sent.length = 0;
+        (function () {
+            const loose = root.append(new El('div'));      // no answer container
+            const code = loose.append(new El('pre')).append(new El('code'));
+            code.textContent = '{"id":"loose_1","calls":[{"tool":"bash","cmd":"echo loose"}]}';
+            global.__mo();
+        })();
+        tick(); await sleep(); tick(); await sleep(); tick(); await sleep();
+        check('a block outside the assistant container is out of scope',
+            sent.length === 0, JSON.stringify(sent));
+    }
+
     console.log('\n== a repaired payload may edit, but may not run a shell ==');
     // The repair rewrites text outside string literals - strips comments, drops
     // trailing commas, rewrites Python literals - so what runs is a guess at
@@ -333,6 +455,9 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
         sent.length === 1 && sent[0].calls[0].cmd === 'echo restarted', JSON.stringify(sent));
 
     console.log('\n== dirty-flag gating ==');
+    // Let any batch still in flight land first. Its paste step looks for the
+    // composer, which is a document query and would be counted as scan work.
+    await sleep(); await sleep(); tick(); await sleep(); await sleep();
     sent.length = 0;
     let scanned = 0;
     const origQSA = document.querySelectorAll;

@@ -15,8 +15,20 @@ ROOT = os.path.dirname(HERE)
 JS_SUITES = ["test_sites.js", "test_long.js", "test_stream.js", "test_scan.js"]
 PY_SUITES = ["test_tools.py"]
 
+# The scan suite runs three times, because the DOM path behaves differently
+# depending on what the adapter knows and the modes fail in opposite directions.
+# The default is Qwen: an answer selector AND a virtualising editor. Claude has
+# an answer selector and no Monaco. An adopted host has neither, so only the
+# subtractive "this is the user's turn" filters apply there.
+JS_VARIANTS = [
+    ("test_scan.js  (claude: scoped, no monaco)", "test_scan.js",
+     {"BRIDGE_TEST_URL": "https://claude.ai/chat/abc123"}),
+    ("test_scan.js  (adopted host: unscoped)", "test_scan.js",
+     {"BRIDGE_TEST_URL": "https://chat.example.test/c/abc123"}),
+]
 
-def run(label, argv, tail=1):
+
+def run(label, argv, tail=1, env=None):
     try:
         # The suites print emoji. Without an explicit utf-8 decode, subprocess
         # falls back to the console codepage, blows up on the first non-cp1252
@@ -24,7 +36,8 @@ def run(label, argv, tail=1):
         # reported as a pass. Every suite read as "(no output)" and the summary
         # said ALL GREEN.
         out = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=600)
+                             encoding="utf-8", errors="replace", timeout=600,
+                             env={**os.environ, **(env or {})})
     except subprocess.TimeoutExpired:
         print(f"  {label:<24} TIMEOUT")
         return False
@@ -63,6 +76,8 @@ def main():
     print("\n== javascript suites ==")
     for s in JS_SUITES:
         ok &= run(s, ["node", os.path.join("tests", s)])
+    for label, suite, env in JS_VARIANTS:
+        ok &= run(label, ["node", os.path.join("tests", suite)], env=env)
 
     print("\n== python suites ==")
     for s in PY_SUITES:
@@ -73,7 +88,10 @@ def main():
 
     if "--mutate" in sys.argv:
         print("\n== mutation coverage ==")
-        run("mutate_sites.js", ["node", os.path.join("tests", "mutate_sites.js")])
+        # Counted towards the verdict. An undetected mutation - or an anchor
+        # that stopped matching, which is how they go quiet - is a hole in the
+        # tests, and a run that prints ALL GREEN under one is worse than useless.
+        ok &= run("mutate_sites.js", ["node", os.path.join("tests", "mutate_sites.js")])
 
     if "--bench" in sys.argv:
         print("\n== benchmark ==")

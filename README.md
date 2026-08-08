@@ -168,8 +168,8 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 172 tests + 5 live captures replayed
-python tests/run_all.py --mutate   # also check the tests can actually fail (14 mutations)
+python tests/run_all.py            # 242 tests + 5 live captures replayed
+python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
 python tests/run_all.py --bench    # throughput
 ```
 
@@ -204,9 +204,14 @@ and only mutation testing showed it.
   private thinking before the payload scan. On some sites reasoning and answer
   share one field, so this is the adapter's main job.
 - **The prompt's own example is inert.** The system prompt teaches the format by
-  showing a valid tool call, and the DOM scan cannot tell who wrote a code
-  block. The script records what it primed a chat with and refuses to act on
-  anything that came from it.
+  showing a valid tool call. The script records what it primed a chat with and
+  refuses to act on anything that came from it.
+- **Only the model's own messages count.** A code block being on the page never
+  meant the model wrote it — your own messages are on the page too. All seven
+  supported sites name the container the assistant writes into, each measured in
+  a live session, and nothing outside it is scanned. A host you adopt by hand
+  has no such selector, so there a smaller subtractive filter is all that
+  applies — see [`docs/SITES.md`](docs/SITES.md).
 
 **`bash` is not sandboxed, which is why it is off by default.** A shell command
 reaches anything your account can, whatever directories you passed to

@@ -64,9 +64,13 @@ before you run it.
 - **The moment between the check and the open.** A path checked and then
   re-pointed a moment later would be followed. Closing that needs the check and
   the open to be one operation, which the stdlib file APIs do not offer.
-- **The DOM fallback's scope.** On sites with no stream adapter, and on hosts
-  adopted with Ctrl+Shift+B, the scanner reads every code block on the page —
-  including your own messages. Do not adopt a site you do not trust.
+- **The DOM fallback's scope on a host you adopt by hand.** All seven supported
+  sites name the container the assistant's messages live in, so nothing outside
+  it is considered. An adopted host has no such selector, and only a small
+  subtractive list of "this is the user's turn" markers applies there — so on
+  one, a code block in your own message can still be executed. Do not adopt a
+  site you do not trust. `docs/SITES.md` has the measured selectors and the
+  procedure for measuring another.
 - **What you send to the provider.** Results are pasted back into the chat, so
   file content the model reads leaves your machine for whichever AI company you
   are using. That is inherent to a bridge whose model runs in their cloud.

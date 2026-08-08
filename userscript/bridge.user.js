@@ -96,6 +96,12 @@
     //            DOM fallback must go through the block's copy action
     //   input    CSS selector for the composer (optional; generic scan otherwise)
     //   send     CSS selector for the send button (optional)
+    //   answer   the container the ASSISTANT's messages render into. The DOM
+    //            scan considers nothing outside it, because a code block being
+    //            on the page never meant the model wrote it - your own messages
+    //            are on the page too. Every one below was measured in a live
+    //            session (see docs/SITES.md), not guessed: a probe conversation
+    //            with a code block from each side, then diff the two ancestries.
     //
     // `frame` receives a state object it mutates: st.text is the answer so far,
     // st.done marks an explicit end-of-stream. Anything else on st is adapter
@@ -203,6 +209,7 @@
             host: /(^|\.)qwen\.ai$/,
             urlRe: /\/api\/v\d+\/chat\/completions/,
             monaco: true,
+            answer: '.qwen-chat-message-assistant, .response-message-content',
             frame(st, o) {
                 const d = o.choices && o.choices[0] && o.choices[0].delta;
                 if (!d) return;
@@ -217,6 +224,7 @@
             urlRe: /\/backend-api\/(f\/)?conversation(\/|\?|$)/,
             input: '#prompt-textarea',
             send: '[data-testid="send-button"], button[aria-label*="Send" i]',
+            answer: '[data-message-author-role="assistant"], [data-turn="assistant"]',
             frame(st, o) {
                 if (!o) return;
                 if (o.message) { cgAbsorb(st, o.message); return; }
@@ -241,6 +249,12 @@
             urlRe: /\/(retry_)?completion(\?|$)/,
             input: 'div[contenteditable="true"]',
             send: '[aria-label="Send message"], button[aria-label*="Send" i]',
+            // Measured in a live session, not guessed: a probe conversation was
+            // given a code block by the user and a code block by the model, and
+            // the two ancestries share nothing. The user's block sits under
+            // [data-testid="user-message"] / [data-cds="UserMessage"]; the
+            // model's under .font-claude-response and [data-is-streaming].
+            answer: '.font-claude-response, [data-is-streaming]',
             frame(st, o) {
                 if (!o) return;
                 if (o.type === 'content_block_delta' && o.delta) {
@@ -262,6 +276,7 @@
             // scanJson pulls balanced JSON objects straight out of the bytes.
             urlRe: /\/apiv2\/kimi\.gateway\.chat\.v\d+\.ChatService\/Chat|\/(api|apiv2)\/chat\/.*(completion|stream)/,
             scanJson: true,
+            answer: '.segment-assistant, .chat-content-item-assistant',
             frame(st, o) {
                 if (!o || typeof o.mask !== 'string') return;
                 if (o.mask === 'message.status') {
@@ -289,6 +304,7 @@
             name: 'deepseek',
             host: /(^|\.)deepseek\.com$/,
             urlRe: /\/api\/v\d+\/chat\/completion/,
+            answer: '.ds-assistant-message-main-content',
             frame(st, o) {
                 if (!o) return;
                 // Opening snapshot: {"v":{"response":{...,"fragments":[...]}}}.
@@ -321,6 +337,7 @@
             name: 'grok',
             host: /(^|\.)(grok\.com|x\.ai)$/,
             urlRe: null,
+            answer: '[data-testid="assistant-message"]',
             frame() {}
         },
         {
@@ -331,6 +348,7 @@
             name: 'gemini',
             host: /(^|\.)gemini\.google\.com$/,
             urlRe: /BardFrontendService\/StreamGenerate/,
+            answer: 'model-response, .model-response-text, .presented-response-container',
             frame(st, o) {
                 if (!Array.isArray(o)) return;
                 for (const entry of o) {
@@ -710,15 +728,47 @@
 
     // Newest MAX_BLOCKS leaf blocks, walking backwards so we never touch the
     // whole document when a chat is long.
+    //
+    // A code block being ON the page never meant the model wrote it. This scan
+    // reads the document, and the document holds your own messages, quoted
+    // snippets, and anything a page chose to render - all of which used to be
+    // executable simply for looking like a payload. Two filters narrow it:
+    //
+    //   site.answer  the container the assistant's messages live in. Where an
+    //                adapter knows it, nothing outside it is even considered.
+    //                Default-deny, so a site redesign stops the DOM path rather
+    //                than quietly widening it.
+    //   NOT_THE_MODEL  a small set of "this is the user's turn" markers that
+    //                several products happen to share, for the sites with no
+    //                answer selector and for hosts adopted by hand. Purely
+    //                subtractive: if it matches nothing, behaviour is as before.
+    const NOT_THE_MODEL = '[data-testid="user-message"], [data-cds="UserMessage"],'
+        + ' [data-message-author-role="user"], [class*="user-message" i],'
+        + ' [class*="human-turn" i]';
+
     function collectCandidates() {
         const all = document.querySelectorAll(BASE_SELECTOR);
         const out = [];
         for (let i = all.length - 1; i >= 0 && out.length < MAX_BLOCKS; i--) {
             const el = all[i];
             if (el.querySelector(LEAF_SELECTOR)) continue;  // wrapper, not a leaf
+            if (!authoredByModel(el)) continue;
             out.push(el);
         }
         return out.reverse();
+    }
+
+    function authoredByModel(el) {
+        if (!el.closest) return true;              // no closest(): assume as before
+        if (el.closest(NOT_THE_MODEL)) {
+            log('   ⏭️ [SCAN] Skipping a block in the user\'s own message');
+            return false;
+        }
+        if (site.answer && !el.closest(site.answer)) {
+            log('   ⏭️ [SCAN] Skipping a block outside the assistant\'s message');
+            return false;
+        }
+        return true;
     }
 
     async function extractPayload(el, i) {

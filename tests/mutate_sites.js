@@ -52,8 +52,8 @@ const MUTATIONS = [
     // Grok is DOM-only; giving it back a urlRe means the stream hook installs
     // and starts parsing load-responses, i.e. the conversation history.
     ['grok: re-enable stream interception on its conversation URLs',
-     [['            name: \'grok\',\n            host: /(^|\\.)(grok\\.com|x\\.ai)$/,\n            urlRe: null,\n            frame() {}',
-       '            name: \'grok\',\n            host: /(^|\\.)(grok\\.com|x\\.ai)$/,\n            urlRe: /\\/rest\\/app-chat\\/conversations\\//,\n            frame(st, o) { if (o && o.responses) st.text += JSON.stringify(o.responses); }']]],
+     [['            urlRe: null,\n            answer: \'[data-testid="assistant-message"]\',\n            frame() {}',
+       '            urlRe: /\\/rest\\/app-chat\\/conversations\\//,\n            answer: \'[data-testid="assistant-message"]\',\n            frame(st, o) { if (o && o.responses) st.text += JSON.stringify(o.responses); }']]],
 
     ['gemini: append snapshots instead of replacing',
      'if (typeof txt === \'string\' && txt) st.text = txt;',
@@ -68,6 +68,11 @@ const MUTATIONS = [
     // Back to a clock-derived id, which is unique on every scan - so the replay
     // guard can neither recognise nor record it, and an id-less payload runs
     // again every time its text comes back round.
+    // Back to executing any code block on the page, whoever wrote it - which
+    // includes the user's own messages and anything a page chose to render.
+    ['scope: treat every code block on the page as the model talking',
+     [['            if (!authoredByModel(el)) continue;\n', '']], null, 'test_scan.js'],
+
     ['replay: give an id-less payload a fresh id on every sighting',
      [['const commandId = payload.id || contentId(calls);',
        'const commandId = payload.id || `auto_${Date.now()}`;']], null, 'test_scan.js'],
