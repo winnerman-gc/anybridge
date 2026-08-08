@@ -104,6 +104,12 @@ script**, replace whatever is in the editor with what you copied, and save
 
 It matches every page but stays dormant except on chat sites it knows.
 
+**Upgrading from 1.0?** Re-copy the script. The two halves now agree a token
+before the agent will run anything, and a 1.0 script does not know how to ask
+for one — so it gets refused by a 1.1 agent, with `refused a request with a
+missing or stale token` in the agent console. The badge in your browser console
+says which one you have.
+
 ### 4. Prime a chat
 
 Open a supported chat, then click the Tampermonkey icon in the toolbar — the
@@ -121,7 +127,7 @@ it a task.
 
 ### Checking it works
 
-The browser console shows a badge reading `anybridge v1.0 <site>` on an active
+The browser console shows a badge reading `anybridge v1.1 <site>` on an active
 site. From there:
 
 - The agent console prints `paired with a browser` the first time the userscript

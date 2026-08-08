@@ -29,7 +29,7 @@ from bridge.render import render_results              # noqa: E402
 from bridge.tools import (TOOLS, disable_tools, dispatch,        # noqa: E402
                           parse_roots, set_roots, within_roots)
 
-VERSION = "1.0"
+VERSION = "1.1"
 
 # Both are settled by the command line in main() before anything serves. Whether
 # a shell is loaded is NOT tracked separately: it is read off the tool registry

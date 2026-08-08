@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Anybridge
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Local tools for any AI chat: typed tool calls read straight from the response stream
 // @match        *://*/*
 // @noframes
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const VERSION      = '1.0';   // keep in step with @version above
+    const VERSION      = '1.1';   // keep in step with @version above
 
     // ── Tunables ────────────────────────────────────────────
     const DEBUG        = false;   // per-block logging; costly on large blocks
