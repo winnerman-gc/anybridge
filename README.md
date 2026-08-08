@@ -6,6 +6,10 @@ result back into the conversation. The chat gets typed file tools on your
 machine — and a shell too, if you ask for one — with no API key and no extension
 beyond a userscript manager.
 
+![The agent's console: the sandbox it was given, a browser pairing with it, two
+batches of tool calls, and the last one refused for pointing outside the
+sandbox](docs/console.svg)
+
 **The AI is the chat website you already use, not a CLI or an API.** There is no
 model running here and no key to supply — you drive it by typing in ChatGPT or
 Claude or Gemini in your browser, exactly as you normally would, and the plan
@@ -167,6 +171,8 @@ bridge/               the tool layer
 userscript/           the browser half, including the per-site stream adapters
 prompts/sys_prompt.txt what the model is told it can do
 docs/SITES.md         per-site protocols, and how to add or re-verify one
+docs/console.svg      the picture above - regenerate it with
+                      docs/make_console_image.py after changing the console
 tests/                suites, plus fixtures/ holding real captured traffic
 probes/               tools for inspecting a live chat's network traffic
 ```
@@ -174,7 +180,7 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 242 tests + 5 live captures replayed
+python tests/run_all.py            # 249 tests + 5 live captures replayed
 python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
 python tests/run_all.py --bench    # throughput
 ```

@@ -637,6 +637,12 @@ TOOLS = {
 }
 
 
+# Tools whose "pattern" argument names a location rather than describing text.
+# A tool added later that globs the filesystem belongs here; one that matches
+# content does not.
+PATTERN_IS_A_PATH = {"glob"}
+
+
 def _check_paths(call):
     """
     Reject a call whose target lies outside the allowed roots.
@@ -648,7 +654,16 @@ def _check_paths(call):
     """
     # "to" is the destination of move/copy. Omitting it would let a move carry a
     # file straight out of the sandbox while only its source was checked.
-    for key in ("path", "to", "cwd", "pattern"):
+    keys = ["path", "to", "cwd"]
+    # "pattern" means two different things. glob's is a path and must be
+    # bounded; grep's is a REGEX matched against file CONTENT, and treating it
+    # as a path refused every grep ever made - `{"pattern": "def "}` was read as
+    # a path, resolved against the working directory, and rejected for being
+    # outside the sandbox. Nothing is lost by not checking it: grep's own "path"
+    # is checked below, and the regex never opens anything.
+    if call.get("tool") in PATTERN_IS_A_PATH:
+        keys.append("pattern")
+    for key in keys:
         raw = call.get(key)
         if not raw:
             continue

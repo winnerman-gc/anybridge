@@ -109,6 +109,35 @@ ck("delete refuses a non-empty dir", not r["ok"] and "not empty" in r["error"], 
 ck("delete recursive works", dispatch({"tool": "delete", "path": w("sub"), "recursive": True})["ok"])
 ck("sub is gone", not os.path.exists(w("sub")))
 
+print("\n== grep matches content, glob matches paths ==")
+# "pattern" means two different things, and the sandbox check treated both as
+# paths: `{"pattern": "def "}` was resolved against the working directory and
+# refused for being outside the roots, so NO grep call had ever succeeded. It
+# went unnoticed because nothing tested grep's success path - only that it was
+# bounded.
+os.makedirs(w("hay"), exist_ok=True)
+open(w("hay/needle.py"), "w").write("import os\n\n\ndef main():\n    return 42\n")
+open(w("hay/other.txt"), "w").write("nothing to see\n")
+
+r = dispatch({"tool": "grep", "pattern": "def ", "path": w("hay")})
+ck("grep with a plain regex works at all", r["ok"], r)
+ck("...and finds the line", "def main" in str(r.get("matches", "")), r)
+r = dispatch({"tool": "grep", "pattern": r"def\s+\w+\(", "path": w("hay")})
+ck("a regex with metacharacters works too", r["ok"], r)
+r = dispatch({"tool": "grep", "pattern": "os", "path": w("hay"), "glob": "*.py"})
+ck("grep honours its file filter", r["ok"] and "other.txt" not in str(r.get("matches", "")), r)
+
+# The regex is free; WHERE it searches is not.
+r = dispatch({"tool": "grep", "pattern": "password", "path": "C:/Windows"})
+ck("grep's path is still bounded",
+   not r["ok"] and "outside allowed roots" in r["error"], r)
+# glob's pattern IS a path, so it stays bounded.
+r = dispatch({"tool": "glob", "pattern": "C:/Windows/**/*.ini"})
+ck("glob's pattern is still bounded",
+   not r["ok"] and "outside allowed roots" in r["error"], r)
+r = dispatch({"tool": "glob", "pattern": w("hay/**/*.py")})
+ck("glob inside the sandbox works", r["ok"] and len(r.get("files", [])) == 1, r)
+
 print("\n== the sandbox still holds ==")
 r = dispatch({"tool": "mkdir", "path": "C:/Windows/evil"})
 ck("mkdir outside roots refused", not r["ok"] and "outside allowed roots" in r["error"], r)
