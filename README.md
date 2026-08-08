@@ -22,7 +22,10 @@ verified live — see [`docs/SITES.md`](docs/SITES.md).
 ## Requirements
 
 - **Python 3.10+** — standard library only, nothing to install
-- **A userscript manager** — Tampermonkey or Violentmonkey
+- **A userscript manager** — a browser extension that runs custom scripts on
+  pages. [Tampermonkey](https://www.tampermonkey.net/) is the usual one
+  (Chrome, Edge, Firefox, Safari); Violentmonkey works too. Install it from your
+  browser's extension store before going further.
 - **Node 18+** — only for the test suites and the traffic probes
 
 Written and tested on Windows. The tool layer uses forward-slash paths
@@ -72,14 +75,19 @@ intended before you start a chat:
 
 ### 3. Install the userscript
 
-Open `userscript/bridge.user.js`, copy it, and paste it into a new Tampermonkey
-script. It matches every page but stays dormant except on chat sites it knows.
+Open `userscript/bridge.user.js` and copy the whole file. Then, in the
+Tampermonkey extension: click its icon in the browser toolbar → **Create a new
+script**, replace whatever is in the editor with what you copied, and save
+(Ctrl+S).
+
+It matches every page but stays dormant except on chat sites it knows.
 
 ### 4. Prime a chat
 
-Open a supported chat, then use Tampermonkey's menu → **Prime this chat with the
-system prompt**. That fetches the prompt from the running agent and sends it as
-the first message.
+Open a supported chat, then click the Tampermonkey icon in the toolbar — the
+script's commands appear in that dropdown — and choose **Prime this chat with
+the system prompt**. That fetches the prompt from the running agent and sends it
+as the first message.
 
 Priming rather than pasting the file by hand matters: the agent fills in the
 `WORKSPACE` section with the directories it is *actually* running with, so the
