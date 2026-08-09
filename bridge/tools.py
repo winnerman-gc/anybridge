@@ -33,27 +33,59 @@ MAX_READ_BYTES = 10 * 1024 * 1024   # refuse to slurp anything larger
 _read_files = {}
 
 
+# Knowing a file was read once is not the same as knowing what is in it now.
+# Between the read and the write, an IDE saves, a build regenerates, a git
+# checkout swaps branches - and the record still says "seen", so a whole-file
+# write happily discards work nobody ever showed the model. Every record carries
+# the file's state at the moment it was taken, and a record whose file has moved
+# on counts as no record at all.
+#
+# mtime AND size, because either alone misses cases; the pair can still miss an
+# edit that preserves both, which needs content hashing to close and is not
+# worth reading every file twice for.
+def _stamp(path):
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _stale(path):
+    rec = _read_files.get(path)
+    return bool(rec) and rec.get("stamp") != _stamp(path)
+
+
 def _mark_read(path, start, end, total):
     rec = _read_files.setdefault(path, {"total": total, "ranges": []})
+    if rec.get("stamp") != _stamp(path):
+        rec["ranges"] = []          # the file moved on since the last look
     rec["total"] = total
+    rec["stamp"] = _stamp(path)
     if end >= start:
         rec["ranges"].append((start, end))
 
 
 def _mark_full(path, total):
     """The model knows the whole file - it just supplied every line of it."""
-    _read_files[path] = {"total": total, "ranges": [(1, total)] if total else []}
+    _read_files[path] = {"total": total, "ranges": [(1, total)] if total else [],
+                         "stamp": _stamp(path)}
 
 
 def _invalidate(path):
-    """Content shifted, so old line numbers no longer describe this file."""
+    """
+    Content shifted, so old line numbers no longer describe this file. The
+    stamp is refreshed rather than dropped: WE made this change, so the record
+    is current even though the numbering is not.
+    """
     if path in _read_files:
         _read_files[path]["ranges"] = []
+        _read_files[path]["stamp"] = _stamp(path)
 
 
 def _covers(path, start, end):
     rec = _read_files.get(path)
-    if not rec:
+    if not rec or _stale(path):
         return False
     need = set(range(start, end + 1))
     for a, b in rec["ranges"]:
@@ -240,10 +272,16 @@ def _numbered(lines, start):
 
 
 def _guard_write(path):
-    """An existing file must have been read before it is modified."""
-    if os.path.exists(path) and path not in _read_files:
+    """An existing file must have been read, and read as it is NOW."""
+    if not os.path.exists(path):
+        return None
+    if path not in _read_files:
         return _err("must read file before modifying it",
                     hint=f'call {{"tool":"read","path":"{path}"}} first')
+    if _stale(path):
+        return _err("the file has changed since you read it",
+                    hint=f'someone or something else edited {path} - read it '
+                         'again before modifying it')
     return None
 
 
@@ -704,6 +742,225 @@ def t_watch_file(path=None, **_):
     return dict(ok=True, path=p, status="unchanged", size=st.st_size)
 
 
+# ---------------------------------------------------------------- apply_patch
+#
+# Applies a unified diff in-process rather than shelling out to `git apply` or
+# `patch`. Shelling out would write files with no read-before-write check and no
+# line-cache invalidation - bypassing the exact guards this layer exists to
+# enforce. Instead the diff is parsed, every target is checked against the
+# allowlist and the read cache, and each hunk's context is verified against the
+# file, all BEFORE anything is written. A stale or drifted patch therefore fails
+# closed instead of landing wrong.
+#
+# `patch` is a list of lines (a string also works). `cwd` is the directory the
+# diff's relative paths resolve against; it defaults to the first allowed root.
+
+
+def _strip_ab(p):
+    """Drop git's a/ or b/ prefix from a diff path."""
+    p = str(p).strip()
+    if p.startswith("a/") or p.startswith("b/"):
+        return p[2:]
+    return p
+
+
+def _parse_patch(text):
+    """
+    Parse a unified diff. Returns (files, err); err is None on success.
+
+    Each file is {"old": path-or-None, "new": path-or-None, "hunks": [...]}.
+    old is None for a created file, new is None for a deleted one. A hunk is
+    {"old_start": int, "old_count": int, "lines": [(tag, text), ...]} where tag
+    is " " (context), "-" (remove) or "+" (add).
+    """
+    lines = text.replace("\r\n", "\n").split("\n")
+    files = []
+    cur = None
+    i, n = 0, len(lines)
+    skip = ("diff ", "index ", "new file mode", "deleted file mode", "old mode",
+            "new mode", "similarity ", "dissimilarity ", "rename ", "copy ",
+            "Binary files ")
+    while i < n:
+        line = lines[i]
+        if line.startswith(skip):
+            i += 1
+            continue
+        if line.startswith("--- "):
+            old = line[4:].strip()
+            i += 1
+            if i >= n or not lines[i].startswith("+++ "):
+                return None, "expected '+++' after '---'"
+            new = lines[i][4:].strip()
+            i += 1
+            cur = {"old": None if old == "/dev/null" else _strip_ab(old),
+                   "new": None if new == "/dev/null" else _strip_ab(new),
+                   "hunks": []}
+            files.append(cur)
+            continue
+        if line.startswith("@@"):
+            if cur is None:
+                return None, "hunk appears before any '--- / +++' file header"
+            m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if not m:
+                return None, f"bad hunk header: {line.strip()!r}"
+            old_count = int(m.group(2)) if m.group(2) is not None else 1
+            new_count = int(m.group(4)) if m.group(4) is not None else 1
+            hunk = {"old_start": int(m.group(1)), "old_count": old_count, "lines": []}
+            cur["hunks"].append(hunk)
+            i += 1
+            old_seen = new_seen = 0
+            while i < n:
+                if old_seen >= old_count and new_seen >= new_count:
+                    break
+                hl = lines[i]
+                if hl.startswith(("@@", "--- ", "diff ")):
+                    break
+                if hl.startswith("\\"):            # "\ No newline at end of file"
+                    i += 1
+                    continue
+                if hl.startswith("+"):
+                    hunk["lines"].append(("+", hl[1:])); new_seen += 1
+                elif hl.startswith("-"):
+                    hunk["lines"].append(("-", hl[1:])); old_seen += 1
+                elif hl.startswith(" "):
+                    hunk["lines"].append((" ", hl[1:])); old_seen += 1; new_seen += 1
+                elif hl == "":
+                    # Blank line: an empty context line. Safe because the count
+                    # check above stops the hunk once it is full.
+                    hunk["lines"].append((" ", "")); old_seen += 1; new_seen += 1
+                else:
+                    break
+                i += 1
+            continue
+        i += 1
+    if not files:
+        return None, "no file hunks found in the patch"
+    return files, None
+
+
+def _patch_cwd(cwd):
+    """Base directory for the diff's relative paths. Defaults to the first
+    allowed root, never the agent's own working directory."""
+    if cwd:
+        return _norm(cwd)
+    return ALLOWED_ROOTS[0] if ALLOWED_ROOTS else os.getcwd().replace('\\', '/')
+
+
+def _patch_path(base, rel):
+    """Resolve a diff-relative path against the base directory."""
+    rel = str(rel).replace('\\', '/').lstrip('/')
+    return _norm(os.path.join(base, rel))
+
+
+def t_apply_patch(cwd=None, patch=None, dry_run=False, **_):
+    """
+    Apply a unified diff. Enforces read-before-write on every file it changes,
+    verifies each hunk's context, and invalidates line numbers afterwards.
+    dry_run=true checks everything but writes nothing.
+    """
+    if patch is None:
+        return _err('"patch" is required')
+    if isinstance(patch, str):
+        text = patch
+    elif isinstance(patch, list):
+        text = "\n".join(str(x) for x in patch)
+    else:
+        return _err('"patch" must be a list of lines')
+    base = _patch_cwd(cwd)
+
+    files, perr = _parse_patch(text)
+    if perr:
+        return _err(perr, hint="expected a unified diff (--- / +++ / @@ hunks)")
+
+    # Plan: resolve every target and check it against the allowlist BEFORE any
+    # guard runs or any byte is written.
+    plan = []
+    for f in files:
+        old_rel, new_rel, hunks = f["old"], f["new"], f["hunks"]
+        if old_rel is None and new_rel is None:
+            return _err("patch entry has neither an old nor a new path")
+        if old_rel is not None and new_rel is not None and old_rel != new_rel:
+            return _err(f"renames are not supported: {old_rel} -> {new_rel}",
+                        hint="apply it as a delete plus a create, or edit the files directly")
+        if old_rel is None:
+            kind, rel = "create", new_rel
+        elif new_rel is None:
+            kind, rel = "delete", old_rel
+        else:
+            kind, rel = "modify", old_rel
+        p = _patch_path(base, rel)
+        if not _within_roots(p):
+            return _err(f"path outside allowed roots: {p}",
+                        hint="allowed: " + ", ".join(ALLOWED_ROOTS or []))
+        plan.append({"kind": kind, "path": p, "hunks": hunks})
+
+    # Verify every file and compute its new content. Nothing is written until the
+    # whole patch is known-good, so a failure part-way changes nothing.
+    writes = []
+    for item in plan:
+        kind, p, hunks = item["kind"], item["path"], item["hunks"]
+        if kind == "create":
+            if os.path.exists(p):
+                return _err(f"patch creates a file that already exists: {p}")
+            body = []
+            for h in hunks:
+                body += [t for tag, t in h["lines"] if tag in (" ", "+")]
+            writes.append(("write", p, body, "\n", True, "create"))
+            continue
+        if not os.path.exists(p):
+            return _err(f"patch {kind}s a file that does not exist: {p}",
+                        hint="check the path; a new file needs a '--- /dev/null' hunk")
+        blocked = _guard_write(p)
+        if blocked:
+            return blocked
+        lines, eol, trailing = _load(p)
+        if kind == "delete":
+            old_side = []
+            for h in hunks:
+                old_side += [t for tag, t in h["lines"] if tag in (" ", "-")]
+            if old_side != lines:
+                return _err(f"delete hunk does not match the whole file: {p}",
+                            hint="re-read the file and regenerate the patch")
+            writes.append(("delete", p))
+            continue
+        # modify: the read must cover every region a hunk replaces
+        for h in hunks:
+            if h["old_count"] > 0 and not _covers(p, h["old_start"],
+                                                  h["old_start"] + h["old_count"] - 1):
+                return _err(f"patch touches lines of {p} that were not in what you read",
+                            hint=f"read {p} over the regions the patch changes, then retry")
+        new_lines = list(lines)
+        # Apply bottom-up so earlier hunks keep their original line numbers.
+        for h in sorted(hunks, key=lambda h: h["old_start"], reverse=True):
+            old_side = [t for tag, t in h["lines"] if tag in (" ", "-")]
+            new_side = [t for tag, t in h["lines"] if tag in (" ", "+")]
+            start0 = h["old_start"] if h["old_count"] == 0 else h["old_start"] - 1
+            if new_lines[start0:start0 + len(old_side)] != old_side:
+                return _err(f"hunk at line {h['old_start']} of {p} does not match the file",
+                            hint="the file changed or the diff is stale - re-read it and regenerate")
+            new_lines[start0:start0 + len(old_side)] = new_side
+        writes.append(("write", p, new_lines, eol, trailing, "modify"))
+
+    if not dry_run:
+        for w in writes:
+            if w[0] == "delete":
+                os.remove(w[1])
+                _read_files.pop(w[1], None)
+            else:
+                _, p, body, eol, trailing, kind = w
+                _save(p, body, eol, trailing)
+                if kind == "create":
+                    _mark_full(p, len(body))
+                else:
+                    _invalidate(p)
+
+    res = dict(ok=True, path=base, dry_run=bool(dry_run), files=len(plan),
+               applied=[f"{item['kind']}  {item['path']}" for item in plan])
+    if dry_run:
+        res["hint"] = "dry run - nothing was written"
+    return res
+
+
 def t_bash(cmd=None, timeout=60, cwd=None, **_):
     """Escape hatch: run a shell command. Prefer the typed tools above."""
     if not cmd:
@@ -736,6 +993,7 @@ TOOLS = {
     "git_status": t_git_status,
     "git_diff": t_git_diff,
     "watch_file": t_watch_file,
+    "apply_patch": t_apply_patch,
     "bash": t_bash,
 }
 

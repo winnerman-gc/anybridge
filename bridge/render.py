@@ -124,6 +124,12 @@ def _render_one(index, r):
         lines.append(f"{head}  {path}  ok  {r.get('status')}"
                      f"  ({r.get('size')} bytes{extra})")
 
+    elif tool == "apply_patch":
+        verb = "would apply" if r.get("dry_run") else "applied"
+        lines.append(f"{head}  {path}  ok  {verb} patch to {r.get('files', 0)} file(s)")
+        for a in r.get("applied", []):
+            lines.append(f"  {a}")
+
     else:
         lines.append(f"{head}  {path}  ok")
         lines += [f"    {k}: {v}" for k, v in r.items()

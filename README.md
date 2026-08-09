@@ -181,7 +181,7 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 261 tests + 5 live captures replayed
+python tests/run_all.py            # 269 tests + 5 live captures replayed
 python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
 python tests/run_all.py --bench    # throughput
 ```
@@ -203,7 +203,9 @@ and only mutation testing showed it.
   token the agent hands out once per run, which the userscript claims by itself.
 - **Read before write.** Modifying a file requires having read the lines being
   changed — not merely having opened the file once. Overwriting a whole file
-  requires having read all of it.
+  requires having read all of it. Writing counts as reading, since the model
+  supplied every line — but if the file then changes on disk (your editor, a
+  build, a checkout) the record expires and it must look again first.
 - **Delete is strictest.** A file must be known before it is destroyed; a
   non-empty directory needs explicit `"recursive": true`. An allowed root cannot
   be deleted at all.

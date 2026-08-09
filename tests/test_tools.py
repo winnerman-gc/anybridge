@@ -79,6 +79,40 @@ dispatch({"tool": "read", "path": w("big.txt"), "offset": 1, "limit": 1000})
 r = dispatch({"tool": "write", "path": w("big.txt"), "lines": ["gone"]})
 ck("write allowed after a full read", r["ok"], r)
 
+print("\n== writing a file counts as having read it ==")
+# The model supplied every line, so it knows the content - requiring it to read
+# back what it just wrote would be a round trip that teaches it nothing.
+dispatch({"tool": "write", "path": w("mine.py"), "lines": ["x = 1"]})
+r = dispatch({"tool": "edit", "path": w("mine.py"), "old": "x = 1", "new": "x = 2"})
+ck("edit straight after a write is allowed", r["ok"], r)
+r = dispatch({"tool": "edit", "path": w("mine.py"), "old": "x = 2", "new": "x = 3"})
+ck("...and again after that edit", r["ok"], r)
+# An edit shifts content, so the whole-file rewrite is NOT unlocked by it.
+r = dispatch({"tool": "write", "path": w("mine.py"), "lines": ["x = 4"]})
+ck("but a whole-file rewrite still is not", not r["ok"] and "not read all" in r["error"], r)
+
+print("\n== a read goes stale when the file changes underneath it ==")
+# Knowing a file was read once is not knowing what is in it now: an IDE saves,
+# a build regenerates, a checkout swaps branches. The record used to have no
+# expiry, so a whole-file write discarded work nobody had ever shown the model.
+import time                                                     # noqa: E402
+stale = w("stale.py")
+open(stale, "wb").write(b"original\n")
+dispatch({"tool": "read", "path": stale})
+time.sleep(0.02)
+open(stale, "wb").write(b"WORK\nWORK\nWORK\n")          # changed behind its back
+r = dispatch({"tool": "write", "path": stale, "lines": ["clobbered"]})
+ck("overwrite refused once the file has moved on",
+   not r["ok"] and "changed since you read it" in r["error"], r)
+ck("...and the file is untouched", raw(stale) == b"WORK\nWORK\nWORK\n", raw(stale))
+r = dispatch({"tool": "edit", "path": stale, "old": "WORK", "new": "MINE"})
+ck("edit refused too", not r["ok"] and "changed since you read it" in r["error"], r)
+r = dispatch({"tool": "replace_lines", "path": stale, "start": 1, "end": 1, "lines": ["x"]})
+ck("replace_lines refused too", not r["ok"], r)
+dispatch({"tool": "read", "path": stale})
+r = dispatch({"tool": "edit", "path": stale, "old": "WORK", "new": "MINE", "all": True})
+ck("reading again clears it", r["ok"], r)
+
 print("\n== line numbers go stale after an edit ==")
 open(w("shift.txt"), "w").write("a\nb\nc\n")
 dispatch({"tool": "read", "path": w("shift.txt")})

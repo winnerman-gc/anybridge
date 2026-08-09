@@ -180,7 +180,15 @@ global.setTimeout = (fn, ms) => realSetTimeout(fn, 0);
 eval(src);
 
 const tick = () => tickFns.forEach(f => f());
-const sleep = () => new Promise(r => realSetTimeout(r, 20));
+// Drain whatever is pending, rather than betting on a single short wait. One
+// 20ms sleep was enough until pairing put a second round trip in front of the
+// first agent call (403, then /pair, then the retry): on a busy machine that
+// extra hop landed after the assertion, and every later test that depended on
+// the batch having completed failed with it. Several short waits let each
+// promise chain finish without making the suite meaningfully slower.
+const sleep = async () => {
+    for (let i = 0; i < 5; i++) await new Promise(r => realSetTimeout(r, 10));
+};
 
 // Real browsers fire mutations on these changes; the script keys off that.
 function mkBlock(text) { const pre = answerHost().append(new El('pre')); const code = pre.append(new El('code')); code.textContent = text; global.__mo(); return code; }
