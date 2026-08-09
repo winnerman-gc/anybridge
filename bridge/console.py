@@ -166,6 +166,7 @@ TOOL_COLOUR = {
     "git_status": C.BLUE, "git_diff": C.BLUE, "watch_file": C.BLUE,
     "write": C.YELLOW, "edit": C.YELLOW, "replace_lines": C.YELLOW,
     "insert_lines": C.YELLOW, "mkdir": C.YELLOW, "copy": C.YELLOW,
+    "apply_patch": C.YELLOW,
     "move": C.YELLOW, "delete": C.RED, "bash": C.MAGENTA,
 }
 
@@ -191,6 +192,10 @@ def describe(call):
         detail = f"  {G['arrow']} {home_short(call.get('to', ''))}"
     elif tool == "grep":
         detail = f"  {call.get('pattern', '')!r}"
+    elif tool == "apply_patch":
+        body = call.get('patch') or []
+        n = len(body) if isinstance(body, list) else len(str(body).splitlines())
+        detail = f"  {n} diff lines" + ("  (dry run)" if call.get('dry_run') else "")
     return f"{target}{C.DIM}{detail}{C.RESET}"
 
 
@@ -239,6 +244,16 @@ def summarize(result):
         return f"now {result.get('total_lines')} lines"
     if tool in ("mkdir", "delete", "move", "copy"):
         return str(result.get("action", "ok"))
+    if tool == "apply_patch":
+        n = result.get("files", 0)
+        what = "checked" if result.get("dry_run") else "patched"
+        return f"{what} {n} file{'s' if n != 1 else ''}"
+    if tool == "git_status":
+        return f"{result.get('branch') or 'detached'}, {result.get('changed', 0)} changed"
+    if tool == "git_diff":
+        return f"{result.get('files', 0)} file(s) changed"
+    if tool == "watch_file":
+        return str(result.get("status", "ok"))
     return "ok"
 
 

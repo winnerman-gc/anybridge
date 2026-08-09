@@ -186,6 +186,24 @@ Move or rename a file or directory.
 Use these rather than bash for file management. They are bounded by the
 directory allowlist; shell commands are not.
 
+── apply_patch ─────────────────────────────
+Apply a unified diff. Good for several changes at once, or changes across
+files; for a single small change, edit is simpler and harder to get wrong.
+{ "tool": "apply_patch", "patch": [
+    "--- a/src/app.py",
+    "+++ b/src/app.py",
+    "@@ -2,1 +2,1 @@",
+    "-old line",
+    "+new line" ] }
+- Paths are relative to the workspace. "--- /dev/null" creates a file;
+  "+++ /dev/null" deletes one, and its hunk must list every line of it.
+- The same rules as every other write: you must have READ the lines a hunk
+  replaces, and the context lines must match the file exactly.
+- All or nothing. If any part of the patch does not apply, none of it does,
+  and nothing is written.
+- Renames are not supported. Use a delete plus a create.
+- "dry_run": true checks the whole patch and writes nothing.
+
 ── git_status / git_diff ───────────────────
 Read the repository state without a shell. "cwd" defaults to the workspace.
 { "tool": "git_status" }

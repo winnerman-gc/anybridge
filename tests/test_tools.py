@@ -182,6 +182,106 @@ ck("file stayed put", os.path.exists(w("leak.txt")))
 r = dispatch({"tool": "delete", "path": tools.ALLOWED_ROOTS[0], "recursive": True})
 ck("refuses to delete an allowed root", not r["ok"], r)
 
+print("\n== apply_patch ==")
+# A patch applier gets to write files, so every guard the other write tools have
+# has to hold here too - and its own failure mode, half-applying a patch, has to
+# not exist.
+os.makedirs(w("patch"), exist_ok=True)
+
+
+def patch(text, **kw):
+    return dispatch(dict({"tool": "apply_patch", "cwd": w("patch"),
+                          "patch": text}, **kw))
+
+
+def put(rel, data):
+    open(w("patch/" + rel), "wb").write(data)
+
+
+put("a.txt", b"one\ntwo\nthree\n")
+r = patch("--- a/a.txt\n+++ b/a.txt\n@@ -2,1 +2,1 @@\n-two\n+TWO\n")
+ck("a patch against an unread file is refused",
+   not r["ok"] and "must read file" in r["error"], r)
+dispatch({"tool": "read", "path": w("patch/a.txt"), "offset": 1, "limit": 1})
+r = patch("--- a/a.txt\n+++ b/a.txt\n@@ -3,1 +3,1 @@\n-three\n+THREE\n")
+ck("...and one touching lines outside what was read",
+   not r["ok"] and "not in what you read" in r["error"], r)
+dispatch({"tool": "read", "path": w("patch/a.txt")})
+r = patch("--- a/a.txt\n+++ b/a.txt\n@@ -2,1 +2,1 @@\n-two\n+TWO\n")
+ck("a patch over lines that were read applies",
+   r["ok"] and raw(w("patch/a.txt")) == b"one\nTWO\nthree\n", raw(w("patch/a.txt")))
+
+# The sandbox, from inside a diff rather than from a path argument.
+r = patch("--- a/../../Windows/evil.txt\n+++ b/../../Windows/evil.txt\n"
+          "@@ -1 +1 @@\n-x\n+y\n")
+ck("a diff path climbing out of the sandbox is refused",
+   not r["ok"] and "outside allowed roots" in r["error"], r)
+r = patch("--- a/C:/Windows/evil.txt\n+++ b/C:/Windows/evil.txt\n@@ -1 +1 @@\n-x\n+y\n")
+ck("an absolute diff path is refused",
+   not r["ok"] and "outside allowed roots" in r["error"], r)
+
+# Half a patch is worse than none: it leaves a tree nobody described.
+put("first.txt", b"alpha\n")
+dispatch({"tool": "read", "path": w("patch/first.txt")})
+r = patch("--- a/first.txt\n+++ b/first.txt\n@@ -1,1 +1,1 @@\n-alpha\n+ALPHA\n"
+          "--- a/missing.txt\n+++ b/missing.txt\n@@ -1,1 +1,1 @@\n-x\n+y\n")
+ck("a patch that fails on its second file writes nothing", not r["ok"], r)
+ck("...and the first file is untouched", raw(w("patch/first.txt")) == b"alpha\n")
+
+# Two entries for one file: each was verified against the file on disk and then
+# written in turn, so the first entry's change was silently thrown away.
+put("dup.txt", b"1\n2\n3\n4\n")
+dispatch({"tool": "read", "path": w("patch/dup.txt")})
+r = patch("--- a/dup.txt\n+++ b/dup.txt\n@@ -1,1 +1,1 @@\n-1\n+ONE\n"
+          "--- a/dup.txt\n+++ b/dup.txt\n@@ -4,1 +4,1 @@\n-4\n+FOUR\n")
+ck("two entries for one file are refused, not half-applied",
+   not r["ok"] and "more than one entry" in r["error"], r)
+ck("...and that file is untouched", raw(w("patch/dup.txt")) == b"1\n2\n3\n4\n",
+   raw(w("patch/dup.txt")))
+
+# Staleness applies here too.
+put("stale2.txt", b"keep\n")
+dispatch({"tool": "read", "path": w("patch/stale2.txt")})
+time.sleep(0.02)
+put("stale2.txt", b"WORK\n")
+r = patch("--- a/stale2.txt\n+++ b/stale2.txt\n@@ -1 +1 @@\n-keep\n+gone\n")
+ck("a patch against a file that changed on disk is refused",
+   not r["ok"] and "changed since you read it" in r["error"], r)
+
+r = patch("--- /dev/null\n+++ b/created.txt\n@@ -0,0 +1,2 @@\n+hello\n+world\n")
+ck("create works", r["ok"] and raw(w("patch/created.txt")) == b"hello\nworld\n")
+r = patch("--- /dev/null\n+++ b/created.txt\n@@ -0,0 +1,1 @@\n+again\n")
+ck("create refuses to clobber", not r["ok"] and "already exists" in r["error"], r)
+
+put("gone.txt", b"x\ny\n")
+dispatch({"tool": "read", "path": w("patch/gone.txt")})
+r = patch("--- a/gone.txt\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x\n")
+ck("a delete that does not account for the whole file is refused",
+   not r["ok"] and os.path.exists(w("patch/gone.txt")), r)
+r = patch("--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x\n-y\n")
+ck("a delete matching the whole file works",
+   r["ok"] and not os.path.exists(w("patch/gone.txt")), r)
+
+dispatch({"tool": "read", "path": w("patch/created.txt")})
+r = patch("--- a/created.txt\n+++ b/created.txt\n@@ -1,1 +1,1 @@\n-hello\n+HELLO\n",
+          dry_run=True)
+ck("dry_run reports success", r["ok"] and r.get("dry_run"), r)
+ck("...and writes nothing", raw(w("patch/created.txt")) == b"hello\nworld\n")
+
+r = patch("--- a/created.txt\n+++ b/renamed.txt\n@@ -1,1 +1,1 @@\n-hello\n+hello\n")
+ck("renames are refused rather than half-understood",
+   not r["ok"] and "renames are not supported" in r["error"], r)
+
+# A file's own line endings survive a patch, as they do every other write.
+open(w("patch/crlf2.txt"), "wb").write(b"a\r\nb\r\n")
+dispatch({"tool": "read", "path": w("patch/crlf2.txt")})
+r = patch("--- a/crlf2.txt\n+++ b/crlf2.txt\n@@ -1,1 +1,1 @@\n-a\n+A\n")
+ck("a CRLF file stays CRLF", r["ok"] and raw(w("patch/crlf2.txt")) == b"A\r\nb\r\n",
+   raw(w("patch/crlf2.txt")))
+
+r = patch("not a diff at all\njust some prose\n")
+ck("prose is not a patch", not r["ok"] and "unified diff" in str(r.get("hint", "")), r)
+
 print("\n== git, without a shell to run it in ==")
 import subprocess                                               # noqa: E402
 

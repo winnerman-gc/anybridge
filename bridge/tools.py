@@ -892,6 +892,17 @@ def t_apply_patch(cwd=None, patch=None, dry_run=False, **_):
         if not _within_roots(p):
             return _err(f"path outside allowed roots: {p}",
                         hint="allowed: " + ", ".join(ALLOWED_ROOTS or []))
+        # One file, one entry. Two entries for the same path were each verified
+        # against the file on disk and then written in turn, so the second wrote
+        # a version computed without the first - and the first hunk's change
+        # vanished while the call still reported success. Whether the second
+        # entry's line numbers mean "before the first was applied" or "after"
+        # depends on who generated the patch, and guessing wrong corrupts the
+        # file quietly. Refusing says so out loud.
+        if any(item["path"] == p for item in plan):
+            return _err(f"the patch has more than one entry for {p}",
+                        hint="put all of that file's hunks in a single "
+                             "--- / +++ entry, or apply the patches one at a time")
         plan.append({"kind": kind, "path": p, "hunks": hunks})
 
     # Verify every file and compute its new content. Nothing is written until the
