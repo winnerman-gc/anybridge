@@ -163,9 +163,10 @@ agent.py              HTTP entry point - this is what you run
                       GET /prompt   the system prompt, workspace filled in
                       GET /pair     hands the browser this run's token, once
 bridge/               the tool layer
-  tools.py            12 file tools: read, write, edit, replace_lines,
+  tools.py            15 tools: read, write, edit, replace_lines,
                       insert_lines, list, glob, grep, mkdir, move, copy,
-                      delete - plus bash behind --bash, and the allowlist
+                      delete, git_status, git_diff, watch_file - plus bash
+                      behind --bash, and the allowlist
   render.py           turns results into the plain text pasted back
   console.py          the agent's terminal output
 userscript/           the browser half, including the per-site stream adapters
@@ -180,7 +181,7 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 249 tests + 5 live captures replayed
+python tests/run_all.py            # 261 tests + 5 live captures replayed
 python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
 python tests/run_all.py --bench    # throughput
 ```

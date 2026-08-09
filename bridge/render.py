@@ -106,6 +106,24 @@ def _render_one(index, r):
         else:
             lines.append("(no matches)")
 
+    elif tool == "git_status":
+        branch = r.get("branch") or "(detached)"
+        lines.append(f"{head}  {r.get('cwd', '')}  ok  {branch}  "
+                     f"{r.get('changed', 0)} changed")
+        lines.append(r["status"] if r.get("status") else "(clean)")
+
+    elif tool == "git_diff":
+        which = "staged" if r.get("staged") else "working tree"
+        lines.append(f"{head}  {r.get('cwd', '')}  ok  {which}, "
+                     f"{r.get('files', 0)} file(s)")
+        lines.append(r["diff"] if r.get("diff") else "(no changes)")
+
+    elif tool == "watch_file":
+        grew = r.get("grew")
+        extra = f", {grew:+d} bytes" if grew else ""
+        lines.append(f"{head}  {path}  ok  {r.get('status')}"
+                     f"  ({r.get('size')} bytes{extra})")
+
     else:
         lines.append(f"{head}  {path}  ok")
         lines += [f"    {k}: {v}" for k, v in r.items()

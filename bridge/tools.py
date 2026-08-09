@@ -604,6 +604,106 @@ def t_delete(path=None, recursive=False, **_):
     return dict(ok=True, path=p, action="deleted")
 
 
+# git is a program, and a repository can ask git to run OTHER programs: a
+# textconv or diff.external driver named in .git/config, a filesystem monitor, a
+# pager. With no shell loaded, a chat that can write inside the sandbox could
+# otherwise write those settings into a repo and get arbitrary execution back
+# out of a "read-only" git call. Every one is overridden on the command line,
+# which beats whatever the repository says, and the two commands below take no
+# arguments from the model beyond a directory.
+GIT_HARDENING = ["-c", "core.fsmonitor=", "-c", "core.pager=cat",
+                 "-c", "diff.external=", "-c", "core.hooksPath=" + os.devnull]
+GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
+           "GIT_OPTIONAL_LOCKS": "0"}
+
+
+def _git(args, cwd, timeout=15):
+    """Run one hardened git command. Returns (result_dict, stdout)."""
+    try:
+        proc = subprocess.run(["git"] + GIT_HARDENING + args, cwd=cwd,
+                              capture_output=True, text=True, timeout=timeout,
+                              env={**os.environ, **GIT_ENV})
+    except FileNotFoundError:
+        return _err("git is not installed, or not on PATH"), None
+    except subprocess.TimeoutExpired:
+        return _err(f"git {args[0]} timed out after {timeout}s"), None
+    except Exception as e:
+        return _err(f"{type(e).__name__}: {e}"), None
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout).strip()
+        hint = ("not a git repository - check the path" if "not a git repo" in err.lower()
+                else None)
+        return _err(f"git {args[0]} failed: {_cap(err)}", **({"hint": hint} if hint else {})), None
+    return None, proc.stdout
+
+
+def _git_cwd(cwd):
+    """Where to run git. Defaults to the first allowed root, never the agent's
+    own working directory, which is usually outside the sandbox."""
+    if cwd:
+        return _norm(cwd)
+    return ALLOWED_ROOTS[0] if ALLOWED_ROOTS else os.getcwd().replace('\\', '/')
+
+
+def t_git_status(cwd=None, **_):
+    """Branch and working-tree state, without shelling out to do it."""
+    p = _git_cwd(cwd)
+    # porcelain v1 rather than the v2 the model might expect: same information,
+    # a fraction of the tokens, and it is the format everyone has seen.
+    bad, out = _git(["status", "--porcelain", "--branch"], p)
+    if bad:
+        return bad
+    lines = [ln for ln in (out or "").splitlines() if ln.strip()]
+    branch = lines[0][3:] if lines and lines[0].startswith("## ") else ""
+    changes = lines[1:] if branch else lines
+    return dict(ok=True, cwd=p, branch=branch, changed=len(changes),
+                status=_cap("\n".join(changes)) if changes else "")
+
+
+def t_git_diff(cwd=None, staged=False, **_):
+    """The working-tree diff, or the staged one."""
+    p = _git_cwd(cwd)
+    # --no-ext-diff and --no-textconv refuse the two per-repository hooks that
+    # would otherwise run a program of the repository's choosing.
+    args = ["diff", "--no-ext-diff", "--no-textconv"]
+    if staged:
+        args.append("--staged")
+    bad, out = _git(args, p)
+    if bad:
+        return bad
+    out = out or ""
+    files = sum(1 for ln in out.splitlines() if ln.startswith("diff --git "))
+    return dict(ok=True, cwd=p, staged=bool(staged), files=files,
+                diff=_cap(out) if out.strip() else "")
+
+
+# Registered per path, so "has this changed since I last looked" costs one stat
+# instead of re-reading the file.
+_watched = {}
+
+
+def t_watch_file(path=None, **_):
+    """Report whether a file has changed since the last call for it."""
+    if not path:
+        return _err('"path" is required')
+    p = _norm(path)
+    if not os.path.exists(p):
+        return _err(f"no such path: {p}")
+    try:
+        st = os.stat(p)
+    except OSError as e:
+        return _err(f"{type(e).__name__}: {e}")
+    now = (st.st_mtime, st.st_size)
+    before = _watched.get(p)
+    _watched[p] = now
+    if before is None:
+        return dict(ok=True, path=p, status="registered", size=st.st_size)
+    if before != now:
+        return dict(ok=True, path=p, status="changed", size=st.st_size,
+                    grew=st.st_size - before[1])
+    return dict(ok=True, path=p, status="unchanged", size=st.st_size)
+
+
 def t_bash(cmd=None, timeout=60, cwd=None, **_):
     """Escape hatch: run a shell command. Prefer the typed tools above."""
     if not cmd:
@@ -633,6 +733,9 @@ TOOLS = {
     "move": t_move,
     "copy": t_copy,
     "delete": t_delete,
+    "git_status": t_git_status,
+    "git_diff": t_git_diff,
+    "watch_file": t_watch_file,
     "bash": t_bash,
 }
 

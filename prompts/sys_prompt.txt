@@ -186,6 +186,18 @@ Move or rename a file or directory.
 Use these rather than bash for file management. They are bounded by the
 directory allowlist; shell commands are not.
 
+── git_status / git_diff ───────────────────
+Read the repository state without a shell. "cwd" defaults to the workspace.
+{ "tool": "git_status" }
+{ "tool": "git_diff", "staged": true }
+Use these instead of asking for `git status` - they are available even when
+bash is not.
+
+── watch_file ──────────────────────────────
+Has this file changed since I last asked? First call registers it; later calls
+answer registered / changed / unchanged. Cheaper than re-reading a build log.
+{ "tool": "watch_file", "path": "C:/temp/build.log" }
+
 ── bash ────────────────────────────────────
 Escape hatch. Runs through Windows cmd.exe. Use for running programs, git,
 package managers - NOT for reading or writing files.

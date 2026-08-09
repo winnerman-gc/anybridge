@@ -148,6 +148,74 @@ ck("file stayed put", os.path.exists(w("leak.txt")))
 r = dispatch({"tool": "delete", "path": tools.ALLOWED_ROOTS[0], "recursive": True})
 ck("refuses to delete an allowed root", not r["ok"], r)
 
+print("\n== git, without a shell to run it in ==")
+import subprocess                                               # noqa: E402
+
+REPO = os.path.join(WORK, "repo")
+os.makedirs(REPO, exist_ok=True)
+
+
+def git(*args):
+    return subprocess.run(["git"] + list(args), cwd=REPO,
+                          capture_output=True, text=True)
+
+have_git = git("init", "-q").returncode == 0
+if not have_git:
+    print("  SKIP  git is not installed")
+else:
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "Test")
+    open(os.path.join(REPO, "a.py"), "w").write("print(1)\n")
+    git("add", "-A")
+    git("commit", "-qm", "first")
+    open(os.path.join(REPO, "a.py"), "w").write("print(2)\n")
+
+    tools.set_roots([WORK])
+    r = dispatch({"tool": "git_status", "cwd": REPO})
+    ck("git_status works", r["ok"] and r.get("changed", 0) >= 1, r)
+    ck("...and names the branch", bool(r.get("branch")), r)
+    r = dispatch({"tool": "git_diff", "cwd": REPO})
+    ck("git_diff works", r["ok"] and r.get("files") == 1, r)
+    ck("...and carries the change", "print(2)" in r.get("diff", ""), r)
+    r = dispatch({"tool": "git_status", "cwd": "C:/Windows"})
+    ck("git is still bounded by the sandbox",
+       not r["ok"] and "outside allowed roots" in r["error"], r)
+
+    # A repository can name a program for git to run - diff.external, textconv,
+    # fsmonitor, a pager. With no shell loaded that would be the way back to
+    # arbitrary execution, so check it against a repository that tries.
+    marker = os.path.join(REPO, "pwned.txt")
+    payload = '"%s" -c "open(r\'%s\',\'w\').write(\'x\')"' % (sys.executable, marker)
+    git("config", "diff.external", payload)
+
+    # First prove the attack is real: plain git diff runs it.
+    git("diff")
+    attack_works = os.path.exists(marker)
+    if os.path.exists(marker):
+        os.remove(marker)
+    ck("(the repository really can make git run a program)", attack_works)
+
+    r = dispatch({"tool": "git_diff", "cwd": REPO})
+    ck("git_diff refuses to run the repository's program",
+       not os.path.exists(marker), r)
+    ck("...and still returns the diff itself", r["ok"], r)
+    git("config", "--unset", "diff.external")
+
+print("\n== watch_file ==")
+watched = w("watched.log")
+# Binary, so the byte count is the same on a platform that would turn \n into
+# \r\n on the way out.
+open(watched, "wb").write(b"one\n")
+r = dispatch({"tool": "watch_file", "path": watched})
+ck("first sight registers the file", r["ok"] and r["status"] == "registered", r)
+r = dispatch({"tool": "watch_file", "path": watched})
+ck("unchanged when nothing happened", r["status"] == "unchanged", r)
+open(watched, "ab").write(b"two\n")
+r = dispatch({"tool": "watch_file", "path": watched})
+ck("changed once it grows", r["status"] == "changed" and r.get("grew") == 4, r)
+r = dispatch({"tool": "watch_file", "path": w("no_such.log")})
+ck("a missing file is an error, not a silent 'unchanged'", not r["ok"], r)
+
 print("\n== the sandbox given on the command line ==")
 # agent.py hands its DIR arguments to set_roots, so what it accepts on the
 # command line and what the tools enforce have to be the same thing.
@@ -312,8 +380,8 @@ ck("disable_tools reports what it removed", tools.disable_tools(["bash"]) == ["b
 ck("...and removing it twice is not an error", tools.disable_tools(["bash"]) == [])
 r = dispatch({"tool": "bash", "cmd": "echo should not run"})
 ck("a bash call is now an unknown tool", not r["ok"] and "unknown tool" in r["error"], r)
-ck("the error lists the twelve that remain",
-   "bash" not in r.get("available", []) and len(r.get("available", [])) == 12, r)
+ck("the error lists what is left, without bash",
+   "bash" not in r.get("available", []) and len(r.get("available", [])) == len(tools.TOOLS), r)
 ck("the file tools still work", dispatch({"tool": "list", "path": WORK})["ok"])
 
 real_prompt = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -358,7 +426,8 @@ ck("a plain run loads no shell", "bash" not in tools_after([]))
 ck("naming directories still loads no shell", "bash" not in tools_after([second]))
 ck("--all does not smuggle one back in", "bash" not in tools_after(["--all"]))
 ck("--bash is the only way to get one", "bash" in tools_after(["--bash"]))
-ck("the other twelve are untouched either way", len(tools_after([])) == 12)
+ck("only bash is affected either way",
+   tools_after(["--bash"]) - tools_after([]) == {"bash"})
 
 tools.TOOLS["bash"] = tools.t_bash          # the suite below expects all 13
 

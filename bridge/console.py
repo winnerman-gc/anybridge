@@ -163,6 +163,7 @@ def ready():
 
 TOOL_COLOUR = {
     "read": C.BLUE, "list": C.BLUE, "glob": C.BLUE, "grep": C.BLUE,
+    "git_status": C.BLUE, "git_diff": C.BLUE, "watch_file": C.BLUE,
     "write": C.YELLOW, "edit": C.YELLOW, "replace_lines": C.YELLOW,
     "insert_lines": C.YELLOW, "mkdir": C.YELLOW, "copy": C.YELLOW,
     "move": C.YELLOW, "delete": C.RED, "bash": C.MAGENTA,
