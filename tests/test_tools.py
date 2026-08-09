@@ -459,6 +459,30 @@ else:
         ck("...and the root is still there", os.path.isdir(IN_DIR))
     tools.set_roots([WORK])
 
+print("\n== a site can be served its own prompt ==")
+ck("an unknown site gets the shared prompt",
+   agent.prompt_path_for("nosuchsite").endswith("sys_prompt.txt"))
+ck("no site at all gets the shared prompt",
+   agent.prompt_path_for("").endswith("sys_prompt.txt"))
+ck("a site with its own file gets that one",
+   agent.prompt_path_for("claude").endswith("sys_prompt.claude.txt"))
+# The site name reaches this from a query string, so it names a file on disk.
+for bad in ["../../etc/passwd", "..", "a/b", "x" * 40, "SYS", "a b"]:
+    ck(f"{bad!r} cannot escape the prompts directory",
+       agent.prompt_path_for(bad).endswith("sys_prompt.txt"))
+
+# Whatever a variant says, the shell rewriting still has to find its anchors:
+# a prompt that advertises bash in a run without one is worse than no variant.
+for name in ("sys_prompt.txt", "sys_prompt.claude.txt"):
+    body = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "prompts", name), encoding="utf-8").read()
+    ck(f"{name} carries the workspace placeholder", "{{WORKSPACE}}" in body)
+    off = agent.build_prompt(body, [WORK], no_bash=True)
+    ck(f"{name} drops the shell when there is none",
+       "Escape hatch. Runs through" not in off and "RUN it with bash" not in off, name)
+    on = agent.build_prompt(body, [WORK], no_bash=False)
+    ck(f"{name} keeps it when there is one", "Escape hatch. Runs through" in on, name)
+
 print("\n== the sandbox as the model is told about it ==")
 filled = agent.build_prompt("before\n{{WORKSPACE}}\nafter", [second])
 ck("the served prompt names every allowed directory", second in filled, filled)

@@ -1077,9 +1077,13 @@
     // priming fails loudly when the agent is down - which is the one case where
     // priming would be pointless anyway.
     async function fetchSysPrompt() {
+        // Which site is asking, so the agent can serve a prompt written for it.
+        // Not cosmetic: Claude reads the shared prompt as an attempted jailbreak
+        // and refuses outright, having been asked to assert a capability it
+        // cannot verify and to drop its usual judgment.
         const res = await agentRequest({
             method: "GET",
-            url: AGENT_URL + "/prompt",
+            url: AGENT_URL + "/prompt?site=" + encodeURIComponent(site.name || ""),
             timeout: 15000
         });
         let data;

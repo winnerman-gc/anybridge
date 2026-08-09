@@ -12,13 +12,14 @@ sandbox](docs/console.svg)
 
 **The AI is the chat website you already use, not a CLI or an API.** There is no
 model running here and no key to supply — you drive it by typing in ChatGPT or
-Claude or Gemini in your browser, exactly as you normally would, and the plan
+Gemini or Qwen in your browser, exactly as you normally would, and the plan
 you already pay for is what powers it. This repo is only the two halves that
 carry a tool call out of that conversation and the result back into it.
 
-Works with ChatGPT, Claude, Gemini, Kimi, DeepSeek, Qwen and Grok. Five of those
-are replayed from captured live traffic by the test suite, and a sixth was
-verified live — see [`docs/SITES.md`](docs/SITES.md).
+Works with ChatGPT, Gemini, Kimi, DeepSeek, Qwen and Grok. Claude's adapter is
+built and tested, but Claude itself declines to act as the bridge's model - see
+[`docs/SITES.md`](docs/SITES.md). Five sites are replayed from captured live
+traffic by the test suite, and a sixth was verified live — see [`docs/SITES.md`](docs/SITES.md).
 
 > **Read the [safety model](#safety-model) before you run this.** The agent gives
 > a chat window real file access on the machine it runs on — bounded to
@@ -181,7 +182,7 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 293 tests + 5 live captures replayed
+python tests/run_all.py            # 308 tests + 5 live captures replayed
 python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
 python tests/run_all.py --bench    # throughput
 ```

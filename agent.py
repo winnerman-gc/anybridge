@@ -13,6 +13,7 @@ import secrets
 import sys
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs
 
 # Windows consoles default to cp1252, which cannot encode the box-drawing and
 # status glyphs below - and it is worse when stdout is redirected to a file.
@@ -42,8 +43,26 @@ ROOTS = parse_roots(os.environ.get("BRIDGE_ROOTS"))   # None means unrestricted
 # Served to the userscript so a chat can be primed from the browser. The agent
 # owns this file, so what the model is told it can do always matches the tool
 # set this process actually has.
-PROMPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "prompts", "sys_prompt.txt")
+PROMPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+PROMPT_PATH = os.path.join(PROMPT_DIR, "sys_prompt.txt")
+
+
+def prompt_path_for(site):
+    """
+    sys_prompt.<site>.txt when one exists, else the shared prompt.
+
+    Sites differ in what they will accept, and not arbitrarily. Claude reads
+    the shared prompt as an attempted jailbreak and says so - it asserts a
+    capability the model cannot verify, and asks it to drop its usual judgment
+    ("no caveats", "do not raise it again"), which is what a real injection
+    looks like. Its own prompt describes the mechanism plainly, keeps its
+    judgment intact, and invites it to test the loop rather than believe in it.
+    """
+    if site and re.fullmatch(r"[a-z0-9_-]{1,20}", str(site)):
+        special = os.path.join(PROMPT_DIR, f"sys_prompt.{site}.txt")
+        if os.path.isfile(special):
+            return special
+    return PROMPT_PATH
 
 STATS = {"batches": 0, "calls": 0, "failed": 0}
 STARTED = time.time()
@@ -297,19 +316,23 @@ class AgentHandler(BaseHTTPRequestHandler):
         elif self.path == "/health":
             self._respond({"status": "online", "name": "anybridge",
                            "version": VERSION, "tools": sorted(TOOLS)})
-        elif self.path == "/prompt":
+        elif self.path.split("?")[0] == "/prompt":
             # Read per request, not at import: editing the prompt then priming a
             # chat should not need the agent restarted.
+            site = ""
+            if "?" in self.path:
+                site = parse_qs(self.path.split("?", 1)[1]).get("site", [""])[0]
+            path = prompt_path_for(site)
             try:
-                with open(PROMPT_PATH, encoding="utf-8") as fh:
+                with open(path, encoding="utf-8") as fh:
                     text = fh.read()
             except OSError as e:
-                ui.note(f"cannot read {PROMPT_PATH}: {e}", ui.C.RED)
+                ui.note(f"cannot read {path}: {e}", ui.C.RED)
                 self._respond({"error": f"cannot read the system prompt: {e}"},
                               code=500)
                 return
             text = build_prompt(text, ROOTS, no_shell())
-            ui.note(f"served the system prompt ({len(text)} chars)")
+            ui.note(f"served {os.path.basename(path)} ({len(text)} chars)")
             # The roots are inside the prompt text where the model needs them.
             # Repeating them as a JSON field only made them easier to lift.
             self._respond({"prompt": text, "version": VERSION})

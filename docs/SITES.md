@@ -152,6 +152,35 @@ containing one, then walk both blocks' ancestors and find what the two chains do
 NOT share. A guessed selector that matches nothing silently stops the bridge
 working on that site, and one that matches too much silently re-opens the hole.
 
+## Claude declines the bridge
+
+Claude on claude.ai will not act as the bridge's model. Not a phrasing problem
+and not a paste problem - it reads the setup and says no, twice, for reasons it
+states clearly:
+
+> I don't have a way to verify what actually happens on your machine... even if
+> something comes back, I still can't verify it's a faithful, unmediated report
+> of a real file operation versus fabricated text designed to look like one.
+
+> It's asking me to adopt a whole new operating mode (parsing JSON blocks,
+> treating fenced code as an action channel) via an in-chat message, which is
+> itself the pattern I'd want to be wary of.
+
+A second prompt was written for it - `prompts/sys_prompt.claude.txt`, honest
+about the mechanism, keeping its judgment intact, inviting it to test the loop
+rather than assert anything. It declined that too, and noted that pre-answering
+its objections made it *more* suspicious, which is fair.
+
+That position is coherent, so the answer is not to keep rewording the prompt
+until it stops noticing. **Use Anthropic's own tooling for local file work with
+Claude** - Claude Code, or an MCP filesystem server - where a tool call is a
+real tool call rather than a convention layered over chat text. The bridge is
+for the six sites that do accept it.
+
+The per-site prompt mechanism it prompted is still here and still useful:
+`GET /prompt?site=<name>` serves `prompts/sys_prompt.<name>.txt` when that file
+exists, and the shared prompt otherwise.
+
 ## Pasting into the composer
 
 Past a certain size these sites stop treating a paste as a message and turn it
