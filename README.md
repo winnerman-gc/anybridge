@@ -181,7 +181,7 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 288 tests + 5 live captures replayed
+python tests/run_all.py            # 293 tests + 5 live captures replayed
 python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
 python tests/run_all.py --bench    # throughput
 ```

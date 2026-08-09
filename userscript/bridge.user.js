@@ -900,11 +900,48 @@
         return target;
     }
 
+    // Past a certain size a paste stops being a message and becomes a file
+    // attachment. Measured 2026-08-09: ChatGPT converts any paste of 10,000
+    // characters or more, Claude somewhere between 4,000 and 5,000. The system
+    // prompt is ~13,000 characters, so priming had quietly turned into "here is
+    // an attachment" rather than an instruction - and a rendered result can
+    // reach 30,000, which would do the same to tool output.
+    //
+    // Pasting in pieces keeps it a message. Fidelity is not the cost: a single
+    // 9,000-character paste into ChatGPT loses exactly the same leading
+    // indentation as the same text in pieces, because its editor normalises
+    // pasted plain text either way.
+    const PASTE_CHUNK = 2000;      // comfortably under the lowest limit measured
+
+    function pasteChunks(text) {
+        const out = [];
+        let cur = '';
+        for (const line of text.split('\n')) {
+            if (cur && cur.length + line.length + 1 > PASTE_CHUNK) { out.push(cur); cur = ''; }
+            cur += (cur ? '\n' : '') + line;
+        }
+        if (cur) out.push(cur);
+        // Split on line boundaries so a piece never tears a line in half - each
+        // paste lands as its own paragraph. A single line longer than the limit
+        // has no boundary to use, so cut it rather than send one oversized paste
+        // and lose the whole thing to an attachment.
+        const safe = [];
+        for (const piece of out) {
+            if (piece.length <= PASTE_CHUNK) { safe.push(piece); continue; }
+            for (let i = 0; i < piece.length; i += PASTE_CHUNK) {
+                safe.push(piece.slice(i, i + PASTE_CHUNK));
+            }
+        }
+        return safe;
+    }
+
+    const pause = ms => new Promise(r => setTimeout(r, ms));
+
     // ChatGPT, Claude and Kimi all compose in ProseMirror-style contenteditables
     // where execCommand('insertText') can flatten or drop newlines. A synthetic
     // paste is the path those editors actually implement, so try it first and
     // only fall back when nothing consumes the event.
-    function setComposerText(target, text) {
+    async function setComposerText(target, text) {
         target.focus();
 
         if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
@@ -918,13 +955,23 @@
         }
 
         try {
-            const dt = new DataTransfer();
-            dt.setData('text/plain', text);
-            const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
-            document.execCommand('selectAll', false, null);
-            // dispatchEvent returns false when the editor called preventDefault,
-            // i.e. when it handled the paste itself.
-            if (!target.dispatchEvent(ev)) return;
+            const pieces = pasteChunks(text);
+            let consumed = true;
+            for (let i = 0; i < pieces.length && consumed; i++) {
+                const dt = new DataTransfer();
+                dt.setData('text/plain', pieces[i]);
+                const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+                // Only the first piece replaces what is there; the rest append
+                // at the caret the previous one left behind.
+                if (i === 0) document.execCommand('selectAll', false, null);
+                // dispatchEvent returns false when the editor called
+                // preventDefault, i.e. when it handled the paste itself.
+                consumed = !target.dispatchEvent(ev);
+                // These editors process a paste asynchronously; firing the next
+                // one into the same tick drops pieces.
+                if (consumed && i + 1 < pieces.length) await pause(120);
+            }
+            if (consumed) return;
         } catch (e) {
             log('   paste-injection unavailable: ' + e.message);
         }
@@ -956,7 +1003,7 @@
         console.log("📤 [SUBMIT] Sent via Enter key");
     }
 
-    function pasteResult(result) {
+    async function pasteResult(result) {
         // Prefer the agent's plain-text render: file content reaches the model
         // with real newlines and real indentation, so what it reads back is
         // byte-identical to what is on disk. Fall back to JSON for older agents.
@@ -970,7 +1017,7 @@
         if (!target) { console.log("❌ [PASTE] Could not find input box!"); return; }
 
         console.log("📋 [PASTE] Injecting batch result...");
-        setComposerText(target, resultText);
+        await setComposerText(target, resultText);
         setTimeout(() => clickSend(target), 500);
     }
 
@@ -1060,7 +1107,7 @@
         rememberPrimer(text);
 
         console.log(`📜 [PRIME] Injecting the system prompt (${text.length} chars)`);
-        setComposerText(target, text);
+        await setComposerText(target, text);
         setTimeout(() => clickSend(target), 500);
     }
 
@@ -1147,7 +1194,7 @@
             }
             pruneKeys();
 
-            pasteResult(result);
+            await pasteResult(result);
 
         } catch (e) {
             console.error("❌ [BATCH] Error:", e);

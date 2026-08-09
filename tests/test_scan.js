@@ -179,6 +179,17 @@ global.setTimeout = (fn, ms) => realSetTimeout(fn, 0);
 
 eval(src);
 
+// The chunker and its limit, lifted out of the source rather than restated, so
+// these tests cannot pass against a version the script does not use.
+const LIMIT = Number(/const PASTE_CHUNK = (\d+)/.exec(src)[1]);
+const SPLIT = (() => {
+    const from = src.indexOf('function pasteChunks(text) {');
+    const rest = src.slice(from);
+    const end = /\r?\n {4}\}/.exec(rest);
+    return new Function('PASTE_CHUNK',
+        rest.slice(0, end.index + end[0].length) + '\nreturn pasteChunks;')(LIMIT);
+})();
+
 const tick = () => tickFns.forEach(f => f());
 // Drain whatever is pending, rather than betting on a single short wait. One
 // 20ms sleep was enough until pairing put a second round trip in front of the
@@ -441,6 +452,28 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     tick(); await sleep(); tick(); await sleep();
     check('a well-formed bash call is untouched',
         sent.length === 1 && sent[0].calls[0].cmd === 'echo clean', JSON.stringify(sent));
+
+    console.log('\n== long text is pasted in pieces, or it stops being a message ==');
+    // Past a size, these sites convert a paste into a file attachment: measured
+    // 2026-08-09, ChatGPT at 10,000 characters and Claude at roughly 3,000 for
+    // text of this shape. The prompt is ~13,000 and a rendered result can be
+    // 30,000, so both were arriving as attachments rather than as instructions.
+    const chunks = SPLIT(SYS_PROMPT);
+    check('the prompt is split into more than one piece', chunks.length > 1, chunks.length);
+    check('no piece can trigger a conversion',
+        chunks.every(c => c.length <= LIMIT), Math.max(...chunks.map(c => c.length)));
+    // Byte for byte, including whatever line endings the file has: the split is
+    // on \n, so a \r stays where it was.
+    check('the pieces reassemble into the prompt exactly',
+        chunks.join('\n') === SYS_PROMPT,
+        `${chunks.join('\n').length} vs ${SYS_PROMPT.length}`);
+    check('pieces break on line boundaries, never mid-line',
+        chunks.every(c => !c.startsWith(' ') || SYS_PROMPT.includes('\n' + c.split('\n')[0])));
+    // A single line longer than the limit has no boundary to split on, and must
+    // still be cut rather than sent whole.
+    const monster = SPLIT('short\n' + 'x'.repeat(LIMIT * 3) + '\nshort');
+    check('an over-long single line is cut anyway',
+        monster.every(c => c.length <= LIMIT), Math.max(...monster.map(c => c.length)));
 
     console.log('\n== pairing happens by itself ==');
     // Nothing above asked for a token, so if the calls got through, the script

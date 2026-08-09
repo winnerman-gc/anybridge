@@ -5,3 +5,4 @@ node_modules/
 mutant*.js
 chrome-debug/
 dom_report.json
+suggestions.md

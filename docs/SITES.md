@@ -152,6 +152,29 @@ containing one, then walk both blocks' ancestors and find what the two chains do
 NOT share. A guessed selector that matches nothing silently stops the bridge
 working on that site, and one that matches too much silently re-opens the hole.
 
+## Pasting into the composer
+
+Past a certain size these sites stop treating a paste as a message and turn it
+into a file attachment. The system prompt is ~13,000 characters and a rendered
+result can reach 30,000, so both were arriving as attachments rather than as
+text - the prompt still "worked", quietly, as a document the model may or may
+not read closely.
+
+| Site | A single paste becomes a file at | Measured |
+|---|---|---|
+| ChatGPT | exactly 10,000 characters | 2026-08-09 |
+| Claude | ~3,000 for prose of this shape (a single long line survives to ~5,000) | 2026-08-09 |
+
+The script therefore pastes in pieces of `PASTE_CHUNK` characters, split on line
+boundaries, with a short pause between them - these editors process a paste
+asynchronously and firing the next into the same tick drops pieces. Both sites
+were then checked with the real prompt: it stays inline, and every marker in it
+survives.
+
+Fidelity is not the price. A single 9,000-character paste into ChatGPT loses
+exactly the same leading indentation as the same text in pieces, because its
+editor normalises pasted plain text either way.
+
 ## Fallbacks
 
 - **DOM scanning** runs when there is no stream adapter, or when the stream
