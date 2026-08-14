@@ -58,7 +58,7 @@ function sseFor(text, deltaSize) {
     console.log('\n== 500-line payload with inner ``` fences, tiny deltas, tiny chunks ==');
     const win = env(sseFor(answer, 7), 64);      // 7-char deltas, 64-byte network chunks
     eval(src);
-    await win.fetch('/api/v2/chat/completions?chat_id=a');
+    await win.fetch('/api/v2/chat/completions?chat_id=a', { method: 'POST' });
     await new Promise(r => setTimeout(r, 400));
     ck('payload fired', sent.length === 1, `sent=${sent.length}`);
     if (sent.length) {
@@ -74,7 +74,7 @@ function sseFor(text, deltaSize) {
     sent.length = 0;
     const noTrail = sseFor(answer, 40).replace(/\n\n$/, '');
     const w2 = env(noTrail, 128); delete global.__bridgeHooked; eval(src);
-    await w2.fetch('/api/v2/chat/completions?chat_id=b');
+    await w2.fetch('/api/v2/chat/completions?chat_id=b', { method: 'POST' });
     await new Promise(r => setTimeout(r, 400));
     ck('final frame not lost', sent.length === 1 && sent[0].calls[0].lines.length === lines.length,
         `sent=${sent.length}`);
@@ -84,7 +84,7 @@ function sseFor(text, deltaSize) {
     const two = '```json\n{"id":"a_1","calls":[{"tool":"list","path":"C:/t"}]}\n```\n\n' +
                 '```json\n{"id":"a_2","calls":[{"tool":"list","path":"C:/u"}]}\n```';
     const w3 = env(sseFor(two, 20), 64); delete global.__bridgeHooked; eval(src);
-    await w3.fetch('/api/v2/chat/completions?chat_id=c');
+    await w3.fetch('/api/v2/chat/completions?chat_id=c', { method: 'POST' });
     await new Promise(r => setTimeout(r, 2600));
     const allCalls = sent.flatMap(s => s.calls);
     ck('both payloads executed', allCalls.length === 2, JSON.stringify(allCalls));
@@ -99,7 +99,7 @@ function sseFor(text, deltaSize) {
         JSON.stringify({ id: 'noise_1', calls: [{ tool: 'list', path: 'C:/t' }] }) + '\n```';
     const w4 = env(sseFor(noisy, 400), 8192);
     eval(src);
-    await w4.fetch('/api/v2/chat/completions?chat_id=d');
+    await w4.fetch('/api/v2/chat/completions?chat_id=d', { method: 'POST' });
     await new Promise(r => setTimeout(r, 500));
     ck('payload after 6000 stray braces still fires',
         sent.length === 1 && sent[0].calls[0].tool === 'list',
@@ -112,7 +112,7 @@ function sseFor(text, deltaSize) {
         JSON.stringify({ id: 'tricky_1', calls: [{ tool: 'list', path: 'C:/t' }] }) + '\n```';
     const w5 = env(sseFor(tricky, 30), 256);
     eval(src);
-    await w5.fetch('/api/v2/chat/completions?chat_id=e');
+    await w5.fetch('/api/v2/chat/completions?chat_id=e', { method: 'POST' });
     await new Promise(r => setTimeout(r, 400));
     ck('picks the object that encloses the marker',
         sent.length === 1 && sent[0].calls.length === 1 && sent[0].calls[0].path === 'C:/t',
@@ -130,7 +130,7 @@ function sseFor(text, deltaSize) {
     }, null, 2) + '\n```';
     const w6 = env(sseFor(nested, 25), 128);
     eval(src);
-    await w6.fetch('/api/v2/chat/completions?chat_id=f');
+    await w6.fetch('/api/v2/chat/completions?chat_id=f', { method: 'POST' });
     await new Promise(r => setTimeout(r, 400));
     ck('skips the nested object and finds the payload',
         sent.length === 1 && sent[0].calls.length === 1 && sent[0].calls[0].path === 'C:/t',

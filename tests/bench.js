@@ -50,7 +50,7 @@ async function run(label, host, url, body, chunk, expectFire) {
     const realLog=console.log; console.log=()=>{};
     const t0 = process.hrtime.bigint();
     eval(src);
-    await win.fetch(url);
+    await win.fetch(url, { method: 'POST' });
     for (let i = 0; i < 400 && !sent.length; i++) await new Promise(r => setTimeout(r, 5));
     console.log=realLog;
     const ms = sent.length ? Number(sent[0].t - t0) / 1e6 : NaN;

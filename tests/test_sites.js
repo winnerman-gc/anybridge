@@ -51,7 +51,7 @@ async function drive(name, host, url, body, chunk) {
     sent.length = 0;
     const win = env(host, body, chunk);
     eval(src);
-    await win.fetch(url);
+    await win.fetch(url, { method: 'POST' });
     await new Promise(r => setTimeout(r, 300));
     const calls = sent.flatMap(s => s.calls);
     ck(`${name}: payload executed`,
@@ -101,6 +101,26 @@ async function drive(name, host, url, body, chunk) {
                               content: { content_type: 'text', parts: [''] } } } }) +
         sse({ p: '/message/content/parts/0', o: 'append', v: EVIL }) +
         'data: [DONE]\n\n');
+
+    // A GET loading a conversation's HISTORY matches the answer URL pattern but
+    // is a read, not a generation answer (fetch() defaults to GET). The body
+    // carries the payload a POST would execute, so this proves the GET path is
+    // what is gated - not the chatgpt adapter.
+    {
+        sent.length = 0;
+        const gBody =
+            'event: delta_encoding\ndata: "v1"\n\n' +
+            sse({ p: '', o: 'add', v: { message: { author: { role: 'assistant' }, recipient: 'all',
+                                  content: { content_type: 'text', parts: [good('cg_g')] } } } }) +
+            sse({ p: '/message/status', o: 'replace', v: 'finished_successfully' }) +
+            'data: [DONE]\n\n';
+        const h = env('chatgpt.com', gBody, 64);
+        delete global.__bridgeHooked;
+        eval(src);
+        await h.fetch('/backend-api/f/conversation/abc123');   // no method -> GET
+        await new Promise(r => setTimeout(r, 200));
+        ck('chatgpt: GET history load does not fire', sent.length === 0, JSON.stringify(sent));
+    }
 
     // ── Claude ──────────────────────────────────────────────
     await drive('claude', 'claude.ai', '/api/organizations/o1/chat_conversations/c1/completion',
@@ -195,7 +215,7 @@ async function drive(name, host, url, body, chunk) {
         console.log = (...a) => { logged.push(a.join(' ')); realLog(...a); };
         const w = env('gemini.google.com', body, 64);
         eval(src);
-        await w.fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=x');
+        await w.fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=x', { method: 'POST' });
         await new Promise(r => setTimeout(r, 300));
         const calls = sent.flatMap(s => s.calls);
         ck('gemini: payload executed',
@@ -231,7 +251,7 @@ async function drive(name, host, url, body, chunk) {
             sse({ choices: [{ delta: { content: '```json\n' + nested + '\n```', phase: 'answer', status: 'typing' } }] }) +
             sse({ choices: [{ delta: { content: '', phase: 'answer', status: 'finished' } }] }), 4096);
         eval(src);
-        await w.fetch('/api/v2/chat/completions?chat_id=nest');
+        await w.fetch('/api/v2/chat/completions?chat_id=nest', { method: 'POST' });
         await new Promise(r => setTimeout(r, 300));
         const calls = sent.flatMap(s => s.calls);
         ck('nested commands array is never mistaken for the payload',

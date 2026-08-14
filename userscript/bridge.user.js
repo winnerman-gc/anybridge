@@ -47,6 +47,12 @@
 
     const TICK_MS      = 1500;    // scan cadence (only does work when DOM changed)
     const MAX_BLOCKS   = 15;      // newest N leaf code blocks considered
+    // Upper bound on how many DOM elements collectCandidates inspects per scan,
+    // walking from the newest backwards. Any conversation a human actually reads
+    // has its newest model blocks within a few elements, so this only clips the
+    // pathological deep walk over a long non-model tail, keeping per-scan work
+    // bounded regardless of how big the loaded history has grown.
+    const MAX_SCAN_WALK = 4000;
     const MIN_LEN      = 20;      // below this a block cannot hold a payload
     const MAX_LEN      = 200000;  // above this it is not one of ours
     const MAX_KEYS     = 300;     // executed-id records retained per browser
@@ -749,7 +755,14 @@
     function collectCandidates() {
         const all = document.querySelectorAll(BASE_SELECTOR);
         const out = [];
-        for (let i = all.length - 1; i >= 0 && out.length < MAX_BLOCKS; i--) {
+        let inspected = 0;
+        // Newest first, so the walk stops as soon as it has the current window of
+        // model blocks; new payloads are by definition the most recent, so they
+        // are always inside the inspected span. MAX_SCAN_WALK bounds the work the
+        // per-element leaf test and closest() ancestor walks do per scan even on
+        // a huge or deep history (older, already-executed blocks need no revisit).
+        for (let i = all.length - 1; i >= 0 && out.length < MAX_BLOCKS && inspected < MAX_SCAN_WALK; i--) {
+            inspected++;
             const el = all[i];
             if (el.querySelector(LEAF_SELECTOR)) continue;  // wrapper, not a leaf
             if (!authoredByModel(el)) continue;
@@ -804,16 +817,24 @@
             return null;
         }
 
-        // Only now, once the block has stopped changing, pull the authoritative
-        // text out of Monaco. Doing this during streaming would fire the copy
-        // action on every tick for no gain.
-        const full = await readBlockText(el);
-
-        const rawText = full
+        // Strip any markdown fences from whatever we are about to parse. The DOM
+        // text is enough for any block rendered in full, so try it first: only
+        // when it does not already hold a balanced object do we wake Monaco's
+        // copy action (needed for virtualised/truncated long blocks). That keeps
+        // loading a chat full of ordinary payload blocks from firing a synthetic
+        // copy-click per block for no gain.
+        const trimFences = s => s
             .replace(/^```json\s*/i, '').replace(/```$/gm, '').trim()
             .replace(/^```\s*/i, '').replace(/```$/gm, '').trim();
 
-        const jsonStr = extractBalancedJson(rawText);
+        let rawText = trimFences(text);
+        let jsonStr = extractBalancedJson(rawText);
+        let full = text;
+        if (jsonStr === null) {
+            full = await readBlockText(el);
+            rawText = trimFences(full);
+            jsonStr = extractBalancedJson(rawText);
+        }
         if (jsonStr === null) {
             // Braces still do not balance even with Monaco's full model text,
             // so the response probably has not finished. Wait, quietly - but not
@@ -826,6 +847,18 @@
                 console.warn(`⚠️ [BLOCK ${i}] JSON never completed after ${n} attempts ` +
                     `(${full.length} chars, DOM had ${text.length}). If these are equal, the ` +
                     `code block is virtualised and long payloads cannot be read from the DOM.`);
+            }
+            if (n >= STUCK_AFTER) {
+                // Once judged stuck, stop re-reading the block - and stop forcing
+                // a full-history rescan - on every tick. settledAt is length-keyed,
+                // so it is examined again the moment its text actually grows.
+                // Without this, a single virtualised/truncated block keeps
+                // scanAndExecute walking the whole conversation forever, which is
+                // what makes a long, heavily-used chat grow steadily more sluggish.
+                incomplete.delete(el);
+                settledAt.set(el, text.length);
+                log(`   ⏳ [BLOCK ${i}] Incomplete JSON after ${n} attempts - pausing until it grows`);
+                return null;
             }
             log(`   ⏳ [BLOCK ${i}] Incomplete JSON (${full.length} chars), still streaming`);
             recheck = true;
@@ -1385,7 +1418,16 @@
             const res = await orig.apply(this, args);
             try {
                 const url = (typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url)) || '';
-                if (!isAnswerUrl(url) || !res.body) return res;
+                // Generation is always non-GET. GET requests that happen to match
+                // the answer pattern are READS - loading a conversation's history,
+                // or the conversation list - whose bodies can be enormous and are
+                // never the model's newest answer. Treating them as answers would
+                // buffer the whole history and re-scan already-executed payloads
+                // on every chat load. Only feed the body through the adapter when
+                // the caller is actually generating.
+                const m0 = args[0] && typeof args[0] === 'object' ? args[0].method : undefined;
+                const method = String((args[1] && args[1].method) || m0 || 'GET').toUpperCase();
+                if (method === 'GET' || !isAnswerUrl(url) || !res.body) return res;
 
                 // clone() so the app still consumes the original untouched.
                 const clone = res.clone();
@@ -1410,13 +1452,15 @@
 
         const open = XHR.prototype.open;
         XHR.prototype.open = function (method, url, ...rest) {
-            try { this.__bridgeUrl = url; } catch {}
+            try { this.__bridgeUrl = url; this.__bridgeMethod = String(method || 'GET').toUpperCase(); } catch {}
             return open.call(this, method, url, ...rest);
         };
         const send = XHR.prototype.send;
         XHR.prototype.send = function (...a) {
             try {
-                if (isAnswerUrl(this.__bridgeUrl)) {
+                // As with the fetch hook, a GET that matches the answer pattern is
+                // a history/read request, never a generation answer; skip it.
+                if (this.__bridgeMethod !== 'GET' && isAnswerUrl(this.__bridgeUrl)) {
                     this.addEventListener('load', () => {
                         try {
                             const t = this.responseText;

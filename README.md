@@ -130,6 +130,14 @@ manually and it still contains the literal `{{WORKSPACE}}` placeholder.
 The model should reply `Bridge online. Tool mode, Windows. Ready.` — then give
 it a task.
 
+Prime in the chat's **non-thinking** mode — the plain, fastest answer mode with
+no reasoning trace. The initialization message is a lot of instructions landing
+at once, and a thinking model is far more prone to stew over the prompt and
+talk itself into refusing it than to just accept it. A non-thinking mode tends
+to take the priming message cleanly and reply `Bridge online... ` right away.
+Once it has, switch thinking back on for the actual work; the priming is already
+done.
+
 ### Checking it works
 
 The browser console shows a badge reading `anybridge v1.1 <site>` on an active

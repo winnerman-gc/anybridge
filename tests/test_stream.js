@@ -58,7 +58,7 @@ function makeEnv(sseText) {
     console.log('== real captured SSE ==');
     const win = makeEnv(realSSE);
     eval(src);
-    await win.fetch('/api/v2/chat/completions?chat_id=abc');
+    await win.fetch('/api/v2/chat/completions?chat_id=abc', { method: 'POST' });
     await new Promise(r => setTimeout(r, 120));
 
     ck('hook fired on the real stream', sent.length === 1, JSON.stringify(sent).slice(0, 150));
@@ -78,11 +78,24 @@ function makeEnv(sseText) {
     const win2 = makeEnv(thinky);
     delete global.__bridgeHooked;
     eval(src);
-    await win2.fetch('/api/v2/chat/completions?chat_id=x');
+    await win2.fetch('/api/v2/chat/completions?chat_id=x', { method: 'POST' });
     await new Promise(r => setTimeout(r, 120));
     ck('only the answer phase executed',
         sent.length === 1 && sent[0].calls.length === 1 && sent[0].calls[0].tool === 'list',
         JSON.stringify(sent).slice(0, 200));
+
+    // A GET that matches the answer URL is a history/read load (fetch() defaults
+    // to GET), never the model's newest answer. The stream body carries a real
+    // payload - the same one a POST would execute - so this proves the GET path
+    // is what is gated, not the adapter.
+    console.log('\n== GET history load is not treated as an answer ==');
+    sent.length = 0;
+    const win3 = makeEnv(realSSE);
+    delete global.__bridgeHooked;
+    eval(src);
+    await win3.fetch('/api/v2/chat/completions?chat_id=load');   // no method -> GET
+    await new Promise(r => setTimeout(r, 120));
+    ck('GET to an answer URL does not fire', sent.length === 0, JSON.stringify(sent));
 
     console.log('\n' + (fail ? 'FAILURES' : 'ALL PASS') + `: ${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);

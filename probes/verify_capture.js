@@ -64,7 +64,7 @@ function replay(site, url, body) {
     const hooked = win.fetch;
     console.log = realLog;
 
-    return { sent, run: async () => { console.log = () => {}; await hooked(url);
+    return { sent, run: async () => { console.log = () => {}; await hooked(url, { method: 'POST' });
              await new Promise(r => setTimeout(r, 500)); console.log = realLog; return sent; } };
 }
 
