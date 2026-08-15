@@ -216,6 +216,12 @@
             urlRe: /\/api\/v\d+\/chat\/completions/,
             monaco: true,
             answer: '.qwen-chat-message-assistant, .response-message-content',
+            // Measured 2026-08-15 with probes/image_probe_cdp.js. A synthetic
+            // paste carrying a File is uploaded exactly as a real Ctrl+V is,
+            // and `thumb` is what the composer renders once it has arrived -
+            // the PUT completes in ~2s but the thumbnail takes ~14s, so this
+            // is the thing to wait for, not a fixed delay.
+            attach: { thumb: '.file-card-list img.vision-item-image' },
             frame(st, o) {
                 const d = o.choices && o.choices[0] && o.choices[0].delta;
                 if (!d) return;
@@ -1036,7 +1042,110 @@
         console.log("📤 [SUBMIT] Sent via Enter key");
     }
 
-    async function pasteResult(result) {
+    // ── Images ──────────────────────────────────────────────
+    //
+    // read_image is the one tool whose result is not text. A chat reads pixels
+    // only from an upload, so the bytes cannot ride back inside the pasted
+    // message: they are fetched from the agent as a real file and handed to
+    // the site's own upload code, on the same message the results are pasted
+    // into. The model then sees the picture beside the text describing it.
+    //
+    // Only where an adapter names an `attach.thumb` measured on that site.
+    // Default-deny for the same reason the DOM scan is: a guessed selector
+    // here would mean clicking send before the upload finished, which sends a
+    // message with no image and no error anywhere.
+    const MAX_ATTACH = 4;             // per batch; each is a real upload
+    const ATTACH_TIMEOUT_MS = 60000;  // measured ~14s on Qwen for a small PNG
+    const ATTACH_POLL_MS = 250;
+
+    // Objects handed to the page must be built with the PAGE's constructors.
+    // A File made from this script's realm is not an instanceof the page's
+    // File, and a site that checks fails to see an attachment at all.
+    function pageWin() {
+        return (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+    }
+
+    function thumbCount(sel, name) {
+        const all = [...document.querySelectorAll(sel)];
+        // alt carries the file name on Qwen, which distinguishes this image
+        // from one already sitting in the composer.
+        return name ? all.filter(i => (i.alt || '') === name).length : all.length;
+    }
+
+    function fetchImageBytes(path) {
+        return agentRequest({
+            method: 'GET',
+            url: AGENT_URL + '/image?path=' + encodeURIComponent(path),
+            responseType: 'arraybuffer',
+            timeout: 60000
+        });
+    }
+
+    async function attachOne(r) {
+        const name = r.name || String(r.path || 'image').split('/').pop();
+        const res = await fetchImageBytes(r.path);
+        if (res.status !== 200 || !res.response) {
+            throw new Error(`agent would not serve it (HTTP ${res.status})`);
+        }
+        const W = pageWin();
+        const src = new Uint8Array(res.response);
+        const bytes = new W.Uint8Array(src.length);
+        bytes.set(src);
+        const file = new W.File([bytes], name, { type: r.mime || 'image/png' });
+        const dt = new W.DataTransfer();
+        dt.items.add(file);
+
+        const target = findComposer();
+        if (!target) throw new Error('no composer to paste into');
+        const before = thumbCount(site.attach.thumb, name);
+        target.focus();
+        target.dispatchEvent(new W.ClipboardEvent('paste',
+            { bubbles: true, cancelable: true, clipboardData: dt }));
+
+        // Wait for the site to say it has the file. The upload is a real one to
+        // the provider and takes seconds; sending before it lands loses the
+        // image silently.
+        const until = Date.now() + ATTACH_TIMEOUT_MS;
+        while (Date.now() < until) {
+            await pause(ATTACH_POLL_MS);
+            if (thumbCount(site.attach.thumb, name) > before) return name;
+        }
+        throw new Error(`the upload did not finish within ${ATTACH_TIMEOUT_MS / 1000}s`);
+    }
+
+    // Returns the lines to append below the pasted results, saying what the
+    // model is actually looking at. An attach that failed must SAY so: the
+    // alternative is a model told an image is attached, staring at a message
+    // that has none.
+    async function attachImages(results) {
+        const wanted = (results || []).filter(
+            r => r && r.tool === 'read_image' && r.ok && r.path);
+        if (!wanted.length) return [];
+        if (!site.attach) {
+            console.log(`🖼️ [IMAGE] No measured attach path for ${site.name}`);
+            return [`(anybridge: images cannot be attached on ${site.name}, so `
+                + `the picture is not in this message)`];
+        }
+        const notes = [];
+        for (const r of wanted.slice(0, MAX_ATTACH)) {
+            try {
+                const name = await attachOne(r);
+                console.log(`🖼️ [IMAGE] Attached ${name}`);
+                notes.push(`(anybridge attached ${name})`);
+            } catch (e) {
+                console.warn(`❌ [IMAGE] ${r.path}: ${e.message}`);
+                notes.push(`(anybridge could NOT attach ${r.name || r.path}: ${e.message} `
+                    + `- there is no image in this message)`);
+            }
+        }
+        if (wanted.length > MAX_ATTACH) {
+            notes.push(`(anybridge attached the first ${MAX_ATTACH} of `
+                + `${wanted.length} images; ask for the rest separately)`);
+        }
+        return notes;
+    }
+
+    async function pasteResult(result, notes) {
         // Prefer the agent's plain-text render: file content reaches the model
         // with real newlines and real indentation, so what it reads back is
         // byte-identical to what is on disk. Fall back to JSON for older agents.
@@ -1044,7 +1153,10 @@
             ? result.render
             : JSON.stringify(result, null, 2);
         const fence = fenceFor(body);
-        const resultText = fence + "\n" + body + "\n" + fence;
+        // The notes sit OUTSIDE the fence: they are this script reporting on
+        // itself, not part of the agent's result.
+        const resultText = fence + "\n" + body + "\n" + fence
+            + ((notes && notes.length) ? "\n" + notes.join("\n") : "");
 
         const target = findComposer();
         if (!target) { console.log("❌ [PASTE] Could not find input box!"); return; }
@@ -1231,7 +1343,10 @@
             }
             pruneKeys();
 
-            await pasteResult(result);
+            // Images first: the file has to be in the composer BEFORE the text
+            // is pasted and sent, since both travel as one message.
+            const notes = await attachImages(result.results);
+            await pasteResult(result, notes);
 
         } catch (e) {
             console.error("❌ [BATCH] Error:", e);

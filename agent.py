@@ -27,8 +27,9 @@ for _stream in (sys.stdout, sys.stderr):
 
 from bridge import console as ui                      # noqa: E402
 from bridge.render import render_results              # noqa: E402
-from bridge.tools import (TOOLS, disable_tools, dispatch,        # noqa: E402
-                          parse_roots, set_roots, within_roots)
+from bridge.tools import (MAX_IMAGE_BYTES, TOOLS, disable_tools,  # noqa: E402
+                          dispatch, image_type, parse_roots, set_roots,
+                          within_roots)
 
 VERSION = "1.1"
 
@@ -286,6 +287,55 @@ class AgentHandler(BaseHTTPRequestHandler):
         ui.note("paired with a browser", ui.C.GREEN)
         self._respond({"token": TOKEN, "version": VERSION})
 
+    def _image(self):
+        """
+        Serve the raw bytes of one image, for the userscript to attach.
+
+        Every other tool result is text and travels inside the JSON reply. An
+        image cannot: the browser needs a real File to hand the chat's upload
+        code, and base64 inside the batch reply would be ~1.4x the file wrapped
+        in a render capped at 30,000 characters.
+
+        This adds no reach. The allowlist is applied here exactly as `dispatch`
+        applies it, the request carries the same token as every other, and
+        `read` could already return any text file inside the sandbox. What is
+        new is only the encoding.
+        """
+        query = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+        raw = (query.get("path") or [""])[0]
+        if not raw:
+            self._respond({"error": "no path given"}, code=400)
+            return
+        path = os.path.abspath(os.path.expanduser(raw.replace("\\", "/"))).replace("\\", "/")
+        if not within_roots(path):
+            ui.note(f"refused an image outside the sandbox: {path}", ui.C.RED)
+            self._respond({"error": "path outside allowed roots"}, code=403)
+            return
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as fh:
+                data = fh.read(MAX_IMAGE_BYTES + 1)
+        except OSError as e:
+            self._respond({"error": f"cannot read {path}: {e}"}, code=404)
+            return
+        # Checked again rather than trusted from the tool result: the browser
+        # chooses what to ask for here, and a file can change between the two
+        # calls.
+        fmt, mime = image_type(data[:4096])
+        if not fmt:
+            ui.note(f"refused a non-image at {path}", ui.C.RED)
+            self._respond({"error": "not an image file"}, code=415)
+            return
+        if size > MAX_IMAGE_BYTES:
+            self._respond({"error": f"image is {size} bytes; too large"}, code=413)
+            return
+        ui.note(f"served {os.path.basename(path)} ({size} bytes, {fmt})")
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _authorised(self):
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip().lower()
         # A missing Host is HTTP/1.0 or a hand-rolled client, never a browser.
@@ -316,6 +366,8 @@ class AgentHandler(BaseHTTPRequestHandler):
         elif self.path == "/health":
             self._respond({"status": "online", "name": "anybridge",
                            "version": VERSION, "tools": sorted(TOOLS)})
+        elif self.path.split("?")[0] == "/image":
+            self._image()
         elif self.path.split("?")[0] == "/prompt":
             # Read per request, not at import: editing the prompt then priming a
             # chat should not need the agent restarted.

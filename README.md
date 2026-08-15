@@ -171,8 +171,10 @@ agent.py              HTTP entry point - this is what you run
                       GET /health   agent status and tool list
                       GET /prompt   the system prompt, workspace filled in
                       GET /pair     hands the browser this run's token, once
+                      GET /image    the bytes of one image, for the browser to
+                                    attach to the chat
 bridge/               the tool layer
-  tools.py            16 tools: read, write, edit, replace_lines,
+  tools.py            17 tools: read, read_image, write, edit, replace_lines,
                       insert_lines, apply_patch, list, glob, grep, mkdir,
                       move, copy, delete, git_status, git_diff,
                       watch_file - plus bash behind --bash, and the allowlist
@@ -190,8 +192,8 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 308 tests + 5 live captures replayed
-python tests/run_all.py --mutate   # also check the tests can actually fail (15 mutations)
+python tests/run_all.py            # 366 tests + 5 live captures replayed
+python tests/run_all.py --mutate   # also check the tests can actually fail (18 mutations)
 python tests/run_all.py --bench    # throughput
 ```
 

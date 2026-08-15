@@ -9,10 +9,20 @@ import os
 import subprocess
 import sys
 
+# The suites print emoji, and this runner echoes their last line. A Windows
+# console defaults to cp1252, so echoing one killed the whole run with a
+# UnicodeEncodeError - after the suite had already passed.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
-JS_SUITES = ["test_sites.js", "test_long.js", "test_stream.js", "test_scan.js"]
+JS_SUITES = ["test_sites.js", "test_long.js", "test_stream.js", "test_scan.js",
+             "test_image.js"]
 PY_SUITES = ["test_tools.py"]
 
 # The scan suite runs three times, because the DOM path behaves differently
@@ -25,6 +35,10 @@ JS_VARIANTS = [
      {"BRIDGE_TEST_URL": "https://claude.ai/chat/abc123"}),
     ("test_scan.js  (adopted host: unscoped)", "test_scan.js",
      {"BRIDGE_TEST_URL": "https://chat.example.test/c/abc123"}),
+    # Qwen is the only site with a measured attach path. Everywhere else the
+    # right behaviour is to fetch nothing and say the picture is not there.
+    ("test_image.js (no attach path)", "test_image.js",
+     {"BRIDGE_TEST_URL": "https://chatgpt.com/c/abc123"}),
 ]
 
 
@@ -47,7 +61,14 @@ def run(label, argv, tail=1, env=None):
         # Silence is not success; a suite that says nothing was not observed.
         print(f"  {label:<24} NO OUTPUT - result unknown, treating as failure")
         return False
-    print(f"  {label:<24} {(lines[-tail:] or ['(silent)'])[-1].strip()}")
+    # Report the suite's VERDICT, not merely its last line. A suite whose
+    # subject logs asynchronously can print a stray warning after its summary,
+    # and echoing that reads as a failure for a run that passed.
+    verdict = next((ln for ln in reversed(lines)
+                    if "PASS" in ln or "FAIL" in ln or "fired" in ln
+                    or "mutations" in ln),
+                   (lines[-tail:] or ["(silent)"])[-1])
+    print(f"  {label:<24} {verdict.strip()}")
     if out.returncode != 0:
         for ln in text.splitlines():
             if "FAIL" in ln or "Error" in ln:

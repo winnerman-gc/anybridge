@@ -119,6 +119,16 @@ Returns the file as numbered lines: "  12\tdef main():"
   limit   max lines (default 400)
 Response includes total_lines and more:true if there is more to read.
 
+── read_image ──────────────────────────────
+LOOK at an image file. The picture is attached to the message carrying this
+result, so you see it directly - screenshots, diagrams, photos, plots.
+{ "tool": "read_image", "path": "C:/temp/screenshot.png" }
+  png, jpeg, gif, bmp and webp. The signature is checked, not the extension.
+  8 MB max, and at most 4 images in one batch.
+The result line gives the format and size; the image itself is above or below
+it in the same message. A line reading "anybridge could NOT attach ..." means
+the picture did not arrive - say so rather than guessing at its contents.
+
 ── write ───────────────────────────────────
 Creates a new file, or FULLY REPLACES an existing one.
 { "tool": "write", "path": "C:/temp/app.py",

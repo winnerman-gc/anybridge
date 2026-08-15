@@ -76,10 +76,35 @@ const MUTATIONS = [
     ['replay: give an id-less payload a fresh id on every sighting',
      [['const commandId = payload.id || contentId(calls);',
        'const commandId = payload.id || `auto_${Date.now()}`;']], null, 'test_scan.js'],
+
+    // The upload is a real one to the provider and takes seconds. Sending as
+    // soon as the File is handed over produces a message with no image in it,
+    // and nothing anywhere reports a failure.
+    ['image: send without waiting for the upload to land',
+     [['        const until = Date.now() + ATTACH_TIMEOUT_MS;\n'
+       + '        while (Date.now() < until) {\n'
+       + '            await pause(ATTACH_POLL_MS);\n'
+       + '            if (thumbCount(site.attach.thumb, name) > before) return name;\n'
+       + '        }\n'
+       + '        throw new Error(`the upload did not finish within ${ATTACH_TIMEOUT_MS / 1000}s`);',
+       '        return name;']], null, 'test_image.js'],
+
+    // A model told the image is attached, looking at a message without one,
+    // does not say "I cannot see it" - it describes something plausible.
+    ['image: report a failed attach as a success',
+     [['notes.push(`(anybridge could NOT attach ${r.name || r.path}: ${e.message} `\n'
+       + '                    + `- there is no image in this message)`);',
+       'notes.push(`(anybridge attached ${r.name || r.path})`);']], null, 'test_image.js'],
+
+    // Attaching where no selector was measured means there is nothing to wait
+    // on, so the wait above cannot work either.
+    ['image: attach on a site with no measured attach path',
+     [['        if (!site.attach) {', '        if (false) {']], null, 'test_image.js',
+     { BRIDGE_TEST_URL: 'https://chatgpt.com/c/abc123' }],
 ];
 
 let ok = 0, bad = 0;
-for (const [name, from, to, suite] of MUTATIONS) {
+for (const [name, from, to, suite, env] of MUTATIONS) {
     // A mutation is either one from/to pair, or a list of them applied together.
     const pairs = Array.isArray(from) ? from : [[from, to]];
     // A list-form entry written as [from, to] instead of [[from, to]] silently
@@ -96,7 +121,10 @@ for (const [name, from, to, suite] of MUTATIONS) {
         // A mutation names its own suite when the guard it breaks lives outside
         // the adapters; SUITE overrides everything for one-off runs.
         out = execFileSync(process.execPath, [__dirname + '/' + (process.env.SUITE || suite || 'test_sites.js')],
-            { env: { ...process.env, BRIDGE_SRC: TMP.replace(/\\/g, '/') }, encoding: 'utf8' });
+            // A mutation may also name the environment its suite needs, for a
+            // guard that only exists on some sites.
+            { env: { ...process.env, BRIDGE_SRC: TMP.replace(/\\/g, '/'), ...(env || {}) },
+              encoding: 'utf8' });
         console.log(`  WEAK ${name}: suite still passed`);
         bad++;
     } catch (e) {

@@ -66,6 +66,16 @@ def _render_one(index, r):
             remaining = r.get("total_lines", 0) - shown_end
             lines.append(f'    ... {remaining} more lines; continue with "offset": {shown_end + 1}')
 
+    elif tool == "read_image":
+        dims = (f"{r.get('width')}x{r.get('height')}"
+                if r.get("width") and r.get("height") else "size unknown")
+        lines.append(f"{head}  {path}  ok  {r.get('format')} {dims}, "
+                     f"{r.get('size')} bytes")
+        # The browser attaches the picture to this same message and appends its
+        # own line saying whether that worked. Saying "attached" here would be a
+        # claim this half cannot check.
+        lines.append("    the image is attached to this message - look at it")
+
     elif tool == "write":
         lines.append(f"{head}  {path}  ok  {r.get('action')} ({r.get('lines_written')} lines)")
 

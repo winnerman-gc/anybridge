@@ -45,6 +45,12 @@ before you run it.
 - **The system prompt's own example is inert.** The script records what it
   primed a chat with and will not act on anything from it.
 - **A repaired payload may edit, but may not run a shell.**
+- **`GET /image` is bounded like every other call.** It serves the raw bytes of
+  one image so the browser can attach it to the chat, and it applies the same
+  allowlist, header, `Host` and token checks as `POST /`. The file's signature
+  is checked there as well as in the tool, so a renamed archive is refused
+  rather than uploaded. It adds no reach: `read` could already return any file
+  inside the sandbox — only the encoding is new.
 
 ## What is not defended, and will not be
 

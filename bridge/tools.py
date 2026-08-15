@@ -720,6 +720,118 @@ def t_git_diff(cwd=None, staged=False, **_):
 _watched = {}
 
 
+# ---------------------------------------------------------------- read_image
+#
+# The one tool whose result is NOT text. Every other tool renders into the
+# message the userscript pastes; an image cannot travel that way, because a
+# chat reads pixels only from an upload. So this tool returns a description -
+# format, dimensions, size - and the userscript fetches the bytes separately
+# from GET /image and attaches them to the same message it pastes the results
+# into. The model then sees the picture beside the text saying what it is.
+#
+# Which means this tool's job is to decide whether a file is safe and sensible
+# to hand a chat, not to move it. Two checks matter:
+#
+#   * The bytes must actually BE an image, by signature rather than by
+#     extension. Renaming an archive to .png must not upload it.
+#   * It must be small enough. The upload is a real one to the provider, and
+#     the browser holds the whole file in memory to build it.
+
+# Signature, name, and where the dimensions live. Order matters only in that
+# webp must be tested after riff, since it is a RIFF container.
+IMAGE_TYPES = [
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
+    (b"\xff\xd8\xff", "jpeg", "image/jpeg"),
+    (b"GIF87a", "gif", "image/gif"),
+    (b"GIF89a", "gif", "image/gif"),
+    (b"BM", "bmp", "image/bmp"),
+]
+
+MAX_IMAGE_BYTES = 8 * 1024 * 1024   # a chat rejects far smaller; this is a backstop
+
+
+def _image_dims(fmt, head):
+    """(width, height) read from the file header, or (None, None)."""
+    try:
+        if fmt == "png":
+            # IHDR is always the first chunk: 8-byte signature, 4-byte length,
+            # "IHDR", then two big-endian 32-bit dimensions.
+            return (int.from_bytes(head[16:20], "big"),
+                    int.from_bytes(head[20:24], "big"))
+        if fmt == "gif":
+            return (int.from_bytes(head[6:8], "little"),
+                    int.from_bytes(head[8:10], "little"))
+        if fmt == "bmp":
+            return (int.from_bytes(head[18:22], "little"),
+                    int.from_bytes(head[22:26], "little"))
+        if fmt == "webp" and head[12:16] == b"VP8X":
+            # VP8X stores each dimension minus one, in three little-endian bytes.
+            return (int.from_bytes(head[24:27], "little") + 1,
+                    int.from_bytes(head[27:30], "little") + 1)
+        if fmt == "jpeg":
+            # No fixed offset: walk the segment chain to a start-of-frame marker.
+            # SOF0..SOF15, skipping the two that are not frame headers.
+            i = 2
+            while i + 9 < len(head):
+                if head[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = head[i + 1]
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                    return (int.from_bytes(head[i + 7:i + 9], "big"),
+                            int.from_bytes(head[i + 5:i + 7], "big"))
+                i += 2 + int.from_bytes(head[i + 2:i + 4], "big")
+    except (IndexError, ValueError):
+        pass
+    return (None, None)
+
+
+def image_type(head):
+    """(format, mime) from the leading bytes, or (None, None) if not an image."""
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ("webp", "image/webp")
+    for sig, fmt, mime in IMAGE_TYPES:
+        if head.startswith(sig):
+            return (fmt, mime)
+    return (None, None)
+
+
+def t_read_image(path=None, **_):
+    """
+    Describe an image file so the browser half can attach it to the chat.
+
+    The bytes are not in this result. They are served by GET /image, which
+    re-checks the allowlist, so nothing here widens what a chat can reach.
+    """
+    if not path:
+        return _err('"path" is required')
+    p = _norm(path)
+    if not os.path.exists(p):
+        return _err(f"no such file: {p}")
+    if os.path.isdir(p):
+        return _err(f"is a directory (use list): {p}")
+    try:
+        size = os.path.getsize(p)
+        with open(p, "rb") as fh:
+            head = fh.read(4096)
+    except OSError as e:
+        return _err(f"{type(e).__name__}: {e}")
+
+    fmt, mime = image_type(head)
+    if not fmt:
+        return _err("not an image file",
+                    hint="read_image takes png, jpeg, gif, bmp or webp - "
+                         "the signature is checked, not the extension")
+    if size > MAX_IMAGE_BYTES:
+        return _err(f"image is {size} bytes; too large to send "
+                    f"({MAX_IMAGE_BYTES} max)",
+                    hint="resize it, or point me at a smaller copy")
+
+    width, height = _image_dims(fmt, head)
+    return dict(ok=True, path=p, name=os.path.basename(p), format=fmt,
+                mime=mime, size=size, width=width, height=height)
+
+
 def t_watch_file(path=None, **_):
     """Report whether a file has changed since the last call for it."""
     if not path:
@@ -990,6 +1102,7 @@ def t_bash(cmd=None, timeout=60, cwd=None, **_):
 
 TOOLS = {
     "read": t_read,
+    "read_image": t_read_image,
     "write": t_write,
     "edit": t_edit,
     "replace_lines": t_replace_lines,

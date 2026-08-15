@@ -206,11 +206,30 @@ editor normalises pasted plain text either way.
 
 ## Sending a local image (Qwen)
 
-Text goes back into the chat as a paste. An image cannot travel that way - a
-chat reads pixels only from an upload - so a `read_image` tool needs the
-userscript to put a real `File` into the site's own upload code.
+`read_image` is the one tool whose result is not text. Text goes back into the
+chat as a paste; an image cannot travel that way, because a chat reads pixels
+only from an upload. So the userscript puts a real `File` into the site's own
+upload code, on the same message it pastes the results into.
 
-It can. **A synthetic `paste` carrying a File is enough on Qwen**: the site
+The wiring, end to end:
+
+1. `read_image` returns a description - format, dimensions, size - and no bytes.
+2. The userscript fetches the bytes from `GET /image?path=...`, which re-checks
+   the allowlist and the file's signature.
+3. It pastes them as a `File` into the composer and **waits for the site to show
+   the attachment**.
+4. Then the results text is pasted and the message sent, carrying both.
+
+An adapter opts in with an `attach.thumb` selector it has measured. Without one
+the userscript fetches nothing and appends a line saying the picture is not in
+the message - default-deny, because a guessed selector means sending before the
+upload lands, which loses the image with no error anywhere.
+
+Note what this does: it uploads the file to the provider. Anything you point
+`read_image` at leaves your machine and is stored by them, exactly as if you had
+attached it by hand.
+
+**A synthetic `paste` carrying a File is enough on Qwen**: the site
 uploads it and renders a thumbnail, exactly as for a real Ctrl+V. That is the
 same event `setComposerText` already uses for text, so no new privilege and no
 site-specific button driving is needed. Measured with `probes/image_probe_cdp.js`

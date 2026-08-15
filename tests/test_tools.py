@@ -350,6 +350,80 @@ ck("changed once it grows", r["status"] == "changed" and r.get("grew") == 4, r)
 r = dispatch({"tool": "watch_file", "path": w("no_such.log")})
 ck("a missing file is an error, not a silent 'unchanged'", not r["ok"], r)
 
+print("\n== read_image ==")
+import struct, zlib                                             # noqa: E402
+
+def make_png(path, width, height):
+    """A real PNG, so the signature and IHDR parse are tested against one."""
+    raw = b"".join(b"\x00" + b"\xff\x00\x00" * width for _ in range(height))
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    with open(path, "wb") as fh:
+        fh.write(b"\x89PNG\r\n\x1a\n"
+                 + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                 + chunk(b"IDAT", zlib.compress(raw))
+                 + chunk(b"IEND", b""))
+
+png = w("shot.png")
+make_png(png, 7, 3)
+r = dispatch({"tool": "read_image", "path": png})
+ck("a real png is accepted", r["ok"], r)
+ck("its format is named", r.get("format") == "png", r)
+ck("its dimensions are read from IHDR", (r.get("width"), r.get("height")) == (7, 3), r)
+ck("its byte size is reported", r.get("size") == os.path.getsize(png), r)
+ck("the bytes are NOT in the result", "data" not in r and "content" not in r, r)
+
+# A GIF's dimensions are little-endian, which is the easy one to get backwards.
+open(w("a.gif"), "wb").write(b"GIF89a" + struct.pack("<HH", 640, 480) + b"\x00" * 20)
+r = dispatch({"tool": "read_image", "path": w("a.gif")})
+ck("gif dimensions are little-endian", (r.get("width"), r.get("height")) == (640, 480), r)
+
+# JPEG has no fixed offset: the size lives in a start-of-frame segment that has
+# to be walked to, past whatever APPn segments came first.
+jpg = (b"\xff\xd8\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x00" * 9
+       + b"\xff\xc0" + struct.pack(">H", 17) + b"\x08"
+       + struct.pack(">HH", 300, 200) + b"\x03" + b"\x00" * 9)
+open(w("b.jpg"), "wb").write(jpg)
+r = dispatch({"tool": "read_image", "path": w("b.jpg")})
+ck("jpeg is recognised", r["ok"] and r.get("format") == "jpeg", r)
+ck("jpeg dimensions come from the frame header",
+   (r.get("width"), r.get("height")) == (200, 300), r)
+
+# The extension is not evidence. Uploading whatever a file is named .png would
+# hand the provider any file in the sandbox.
+open(w("fake.png"), "wb").write(b"this is just text, not an image at all")
+r = dispatch({"tool": "read_image", "path": w("fake.png")})
+ck("a text file named .png is refused", not r["ok"], r)
+ck("...and the error says why", "not an image" in r.get("error", ""), r)
+
+r = dispatch({"tool": "read_image", "path": w("nope.png")})
+ck("a missing image is an error", not r["ok"], r)
+r = dispatch({"tool": "read_image"})
+ck("a call with no path is an error", not r["ok"], r)
+r = dispatch({"tool": "read_image", "path": WORK})
+ck("a directory is not an image", not r["ok"], r)
+
+saved_cap = tools.MAX_IMAGE_BYTES
+tools.MAX_IMAGE_BYTES = 64
+try:
+    r = dispatch({"tool": "read_image", "path": png})
+    ck("an oversized image is refused", not r["ok"], r)
+    ck("...and the error gives the cap", "too large" in r.get("error", ""), r)
+finally:
+    tools.MAX_IMAGE_BYTES = saved_cap
+
+r = dispatch({"tool": "read_image", "path": "C:/Windows/nowhere.png"})
+ck("an image outside the sandbox is refused by the allowlist",
+   not r["ok"] and "outside allowed roots" in r.get("error", ""), r)
+
+# The render is what the model actually reads, and it must not claim the
+# picture arrived - only the browser knows that.
+from bridge.render import render_results                        # noqa: E402
+text = render_results([dispatch({"tool": "read_image", "path": png})])
+ck("the render names the format and size", "png 7x3" in text, text)
+ck("the render points the model at the image", "attached to this message" in text)
+
 print("\n== the sandbox given on the command line ==")
 # agent.py hands its DIR arguments to set_roots, so what it accepts on the
 # command line and what the tools enforce have to be the same thing.
@@ -593,7 +667,7 @@ print("\n== the agent answers the userscript and nothing else ==")
 # Binding 127.0.0.1 does not keep out the web page you have open: a browser
 # sends a page's fetch() to localhost quite happily, and these tools run shell
 # commands. Every case below is a request a malicious page can actually make.
-import contextlib, io, threading, urllib.error, urllib.request      # noqa: E402
+import contextlib, io, threading, urllib.error, urllib.parse, urllib.request   # noqa: E402
 
 tools.set_roots([WORK])
 srv = agent.BridgeServer(("127.0.0.1", 0), agent.AgentHandler)
@@ -666,6 +740,47 @@ ck("GET /prompt is served with it", hit("/prompt", "GET", FULL_H) == 200)
 # A page still cannot reach /pair: it is behind the same header and Host checks.
 ck("a page cannot pair either", hit("/pair", "GET", JSON_H) == 403)
 ck("...nor from a rebound host", hit("/pair", "GET", dict(OK_H, Host="evil.example")) == 403)
+
+print("\n== GET /image serves bytes, under the same guards as everything else ==")
+# read_image's result deliberately carries no bytes; the browser fetches them
+# here. That makes this a second door into the file system, so it has to be
+# bounded by the same allowlist, header, Host and token checks as the first.
+def fetch(path, headers=None):
+    """(status, body, content-type) for one GET."""
+    r = urllib.request.Request(BASE + path, method="GET")
+    for k, v in (headers or {}).items():
+        r.add_header(k, v)
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status, resp.read(), resp.headers.get("Content-Type")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers.get("Content-Type")
+
+img = "/image?path=" + urllib.parse.quote(png)
+status, data, ctype = fetch(img, FULL_H)
+ck("the image is served whole", status == 200 and data == raw(png), status)
+ck("...with the type the browser needs to build a File", ctype == "image/png", ctype)
+
+ck("a page with no header cannot fetch an image", fetch(img, JSON_H)[0] == 403)
+ck("nor can a caller without the token", fetch(img, OK_H)[0] == 403)
+ck("nor a rebound host", fetch(img, dict(FULL_H, Host="evil.example"))[0] == 403)
+
+outside = os.path.join(os.path.dirname(WORK), "outside_the_sandbox.png").replace("\\", "/")
+make_png(outside, 2, 2)
+try:
+    ck("an image outside the sandbox is refused",
+       fetch("/image?path=" + urllib.parse.quote(outside), FULL_H)[0] == 403)
+finally:
+    os.remove(outside)
+
+# The signature is checked here too, not taken on trust from the tool result:
+# the browser chooses what to ask for, and a file can change in between.
+ck("a text file is refused even with a valid token",
+   fetch("/image?path=" + urllib.parse.quote(w("fake.png")), FULL_H)[0] == 415)
+ck("a missing file is a 404",
+   fetch("/image?path=" + urllib.parse.quote(w("gone.png")), FULL_H)[0] == 404)
+ck("no path at all is a 400", fetch("/image", FULL_H)[0] == 400)
 
 srv.shutdown()
 tools.set_roots(saved)
