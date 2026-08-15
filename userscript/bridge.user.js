@@ -434,8 +434,75 @@
 
     // The Tampermonkey menu is the only chrome this script has. Registered only
     // on an active site: priming a chat nothing would ever read is a trap.
+    // ── Keeping the tab awake (opt in) ──────────────────────
+    //
+    // A tab that is playing audio is exempt from timer throttling, and Chrome
+    // will not freeze or discard it. An inaudible tone is therefore the one
+    // lever a page has over its own lifecycle, and the only thing that helps
+    // when a tab is discarded outright rather than merely slowed down.
+    //
+    // It costs a speaker icon on the tab, so it is off by default and lives
+    // behind a menu command. The browser's own setting is the tidier fix where
+    // it is enough: Chrome  Settings > Performance > "Always keep these sites
+    // active".
+    const AWAKE_KEY = 'bridge_awake';
+    let awakeCtx = null;
+
+    function startAwake() {
+        if (awakeCtx) return true;
+        const W = pageWin();
+        const Ctx = W.AudioContext || W.webkitAudioContext;
+        if (!Ctx) { console.log('🔇 [AWAKE] This browser has no AudioContext'); return false; }
+        try {
+            const ctx = new Ctx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            gain.gain.value = 0.0001;      // real output, far below hearing
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            awakeCtx = ctx;
+        } catch (e) {
+            console.warn('🔇 [AWAKE] could not start: ' + e.message);
+            return false;
+        }
+        // Autoplay policy: a context created without a user gesture starts
+        // suspended, and a suspended context keeps nothing awake. Say so and
+        // resume on the first real interaction, rather than reporting success
+        // for something that is not running.
+        if (awakeCtx.state === 'suspended') {
+            const kick = () => {
+                if (awakeCtx) awakeCtx.resume();
+                document.removeEventListener('click', kick, true);
+                document.removeEventListener('keydown', kick, true);
+            };
+            document.addEventListener('click', kick, true);
+            document.addEventListener('keydown', kick, true);
+            console.log('🔊 [AWAKE] Armed - click anywhere on the page once to start it');
+        } else {
+            console.log('🔊 [AWAKE] This tab will stay awake in the background');
+        }
+        return true;
+    }
+
+    function stopAwake() {
+        if (!awakeCtx) return;
+        try { awakeCtx.close(); } catch (e) { /* already gone */ }
+        awakeCtx = null;
+        console.log('🔇 [AWAKE] Off - the browser may throttle or freeze this tab again');
+    }
+
+    function toggleAwake() {
+        const on = !GM_getValue(AWAKE_KEY, false);
+        GM_setValue(AWAKE_KEY, on);
+        if (on) startAwake(); else stopAwake();
+    }
+
+    if (GM_getValue(AWAKE_KEY, false)) startAwake();
+
     if (typeof GM_registerMenuCommand === 'function') {
         GM_registerMenuCommand('Prime this chat with the system prompt', primeChat);
+        GM_registerMenuCommand('Keep this tab awake in the background (on/off)', toggleAwake);
     }
 
     let isProcessing = false;
@@ -1105,12 +1172,43 @@
         // Wait for the site to say it has the file. The upload is a real one to
         // the provider and takes seconds; sending before it lands loses the
         // image silently.
-        const until = Date.now() + ATTACH_TIMEOUT_MS;
-        while (Date.now() < until) {
-            await pause(ATTACH_POLL_MS);
-            if (thumbCount(site.attach.thumb, name) > before) return name;
-        }
+        if (await waitForThumb(name, before)) return name;
         throw new Error(`the upload did not finish within ${ATTACH_TIMEOUT_MS / 1000}s`);
+    }
+
+    // Watched, not polled. A poll is a timer, and a hidden tab's timers are
+    // throttled to one a second - one a MINUTE after five minutes hidden - so
+    // a polled wait would time out having looked twice. The thumbnail
+    // appearing is itself a DOM mutation, and observer callbacks are delivered
+    // on the change rather than on a timer, so this notices it at once however
+    // throttled the tab is. The interval stays as a backstop for a site that
+    // swaps a src without changing the tree.
+    function waitForThumb(name, before) {
+        return new Promise(resolve => {
+            const deadline = Date.now() + ATTACH_TIMEOUT_MS;
+            let obs = null, timer = null, settled = false;
+            const finish = ok => {
+                if (settled) return;
+                settled = true;
+                if (obs) obs.disconnect();
+                if (timer) clearInterval(timer);
+                resolve(ok);
+            };
+            const check = () => {
+                if (thumbCount(site.attach.thumb, name) > before) return finish(true);
+                // Checked here rather than on a timer of its own: in a frozen
+                // tab no timer runs at all, and the deadline should be judged
+                // when the tab is actually alive again.
+                if (Date.now() > deadline) return finish(false);
+            };
+            try {
+                obs = new MutationObserver(check);
+                obs.observe(document.documentElement,
+                    { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'alt'] });
+            } catch (e) { /* no observer: the interval below still covers it */ }
+            timer = setInterval(check, ATTACH_POLL_MS);
+            check();
+        });
     }
 
     // Returns the lines to append below the pasted results, saying what the
@@ -1264,9 +1362,13 @@
         if (isProcessing) return;
         // Once the stream hook has delivered a payload it is the authoritative
         // source; scraping the DOM as well only risks acting on a truncated
-        // view. Dedupe by id would catch it, but not scanning at all is cheaper
-        // and removes the failure mode entirely.
-        if (streamSeen && !force) return;
+        // view. But trust it for a WINDOW, not forever. A tab frozen mid-answer
+        // never finishes reading that stream, and a permanent latch here left
+        // the DOM fallback disabled for the rest of the page's life - so the
+        // bridge went quiet until a reload, which is one of the ways a
+        // backgrounded tab "just stops working". Double execution is not the
+        // risk it sounds: every payload is deduped by id.
+        if (streamSeenAt && Date.now() - streamSeenAt < STREAM_TRUST_MS && !force) return;
         if (!force && !dirty && !recheck) return;   // nothing changed since last scan
         dirty = false;
         recheck = false;
@@ -1514,7 +1616,7 @@
         const found = payloadsFromMarkdown(st.text);
         if (!found.length) return;
         console.log(`📥 [STREAM] ${found.length} payload(s) from response (${st.text.length} chars)`);
-        streamSeen = true;
+        streamSeenAt = Date.now();
         await runBatch(found, 'stream');
     }
 
@@ -1589,7 +1691,10 @@
         return true;
     }
 
-    let streamSeen = false;
+    // How long a delivered stream payload keeps the DOM path switched off.
+    let streamSeenAt = 0;
+    const STREAM_TRUST_MS = 30000;
+
     if (site.urlRe) {
         console.log(installStreamHook()
             ? '🔌 Response stream hook installed (primary source)'
@@ -1599,18 +1704,86 @@
         console.log(`ℹ️ No stream adapter for ${site.name} - using DOM scanning`);
     }
 
-    // A streaming response fires mutations constantly, so the handler stays
-    // trivial - it only raises a flag that the ticker below acts on.
-    new MutationObserver(() => { dirty = true; })
-        .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    // ── A background tab is not a running tab ───────────────
+    //
+    // Chrome throttles a hidden tab's timers to one a second, and after five
+    // minutes of being hidden to one a MINUTE. Memory Saver may then freeze the
+    // tab outright, and eventually discard it. So everything that waits on
+    // setInterval stops waiting at any useful rate the moment you switch tabs -
+    // which is exactly when a long tool run is left to get on with it, and is
+    // why the bridge appears to "go dormant". Three answers, in the order they
+    // matter:
+    //
+    //   1. Scan when the DOM CHANGES, not only when a timer is allowed to fire.
+    //      MutationObserver callbacks are delivered on the change itself, so a
+    //      throttled tab still sees a payload as soon as the answer renders.
+    //      The ticker below stays as a backstop for anything that mutates
+    //      nothing.
+    //   2. Catch up on waking. A frozen tab misses everything, including the
+    //      end of a response stream, so coming back forces a full rescan rather
+    //      than waiting for the next tick.
+    //   3. Keep the tab out of that state entirely - opt in from the menu.
+    //
+    // What none of this can fix is a DISCARDED tab: the page is gone and the
+    // script with it. The executed-id records are in GM storage, so a reload
+    // resumes safely, but a reply that arrived while the tab was discarded is
+    // lost. The keep-awake command is the answer to that one.
+    const SCAN_GAP_MS = 500;      // fastest the mutation-driven scan may run
+    let lastScanAt = 0;
 
-    setInterval(() => scanAndExecute(false), TICK_MS);
+    function scanNow(force) {
+        lastScanAt = Date.now();
+        scanAndExecute(force);
+    }
+
+    // While the tab is visible the ticker below is perfectly good, and scanning
+    // on mutations as well would only add work to the busiest moment there is.
+    // Hidden is the case that needs this: the ticker has been throttled to once
+    // a second, or once a minute, and the mutation is the only signal arriving
+    // on time. The gate is a wall-clock comparison rather than a timer, because
+    // a timer is the thing being throttled.
+    new MutationObserver(() => {
+        dirty = true;
+        if (document.hidden && Date.now() - lastScanAt >= SCAN_GAP_MS) scanNow(false);
+    }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+
+    setInterval(() => scanNow(false), TICK_MS);
+
+    let hiddenSince = 0;
+
+    function wake(why) {
+        const napped = hiddenSince ? Math.round((Date.now() - hiddenSince) / 1000) : 0;
+        hiddenSince = 0;
+        if (napped >= 5) {
+            console.log(`⏰ [WAKE] This tab was in the background for ${napped}s `
+                + `(${why}); rescanning in case something landed while it was throttled`);
+        }
+        lastScanAt = 0;
+        scanNow(true);
+    }
+
+    if (typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) { hiddenSince = Date.now(); return; }
+            wake('visible');
+        });
+        // Page Lifecycle: Chrome fires these when it freezes a background tab
+        // and when it lets it run again.
+        document.addEventListener('freeze', () => { hiddenSince = hiddenSince || Date.now(); });
+        document.addEventListener('resume', () => wake('resume'));
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('focus', () => wake('focus'));
+        // A restore from the back/forward cache runs the old script again with
+        // its timers stopped, so it needs the same catch-up.
+        window.addEventListener('pageshow', e => { if (e && e.persisted) wake('bfcache'); });
+    }
 
     setInterval(() => {
         if (location.href !== lastUrl) {
             lastUrl = location.href;
             console.log("🔄 New chat detected.");
-            scanAndExecute(true);
+            scanNow(true);
         }
     }, 1000);
 
@@ -1619,10 +1792,16 @@
             e.preventDefault();
             console.log("🔥 Manual rescan triggered");
             if (typeof GM_listValues === 'function') {
-                // bridge_hosts is configuration, not an execution record -
-                // wiping it would silently un-enable every adopted chat site.
+                // These are configuration, not execution records. Wiping them
+                // would silently un-enable every adopted chat site, switch off
+                // a tab's keep-awake behind your back - and, worst of the
+                // three, throw away the pairing token. The agent hands one out
+                // ONCE per run, so a rescan that deleted it left the bridge
+                // dead until the agent was restarted, with the console
+                // reporting that another client had taken the pairing.
+                const CONFIG_KEYS = ['bridge_hosts', AWAKE_KEY, TOKEN_KEY];
                 GM_listValues()
-                    .filter(k => k.startsWith('bridge_') && k !== 'bridge_hosts')
+                    .filter(k => k.startsWith('bridge_') && CONFIG_KEYS.indexOf(k) === -1)
                     .forEach(k => GM_deleteValue(k));
                 console.log("🗑️ Cleared all stored execution keys");
             }

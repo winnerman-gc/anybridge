@@ -77,17 +77,37 @@ const MUTATIONS = [
      [['const commandId = payload.id || contentId(calls);',
        'const commandId = payload.id || `auto_${Date.now()}`;']], null, 'test_scan.js'],
 
+    // A hidden tab's timers are throttled to one a second, then one a minute.
+    // With only the ticker to go on, the bridge appears to stop working the
+    // moment you switch tabs.
+    ['dormancy: leave a hidden tab to its throttled ticker',
+     [['        if (document.hidden && Date.now() - lastScanAt >= SCAN_GAP_MS) scanNow(false);\n', '']],
+     null, 'test_scan.js'],
+
+    // A frozen tab misses the end of a response entirely. If waking up does not
+    // catch up, that payload is never seen.
+    ['dormancy: do not rescan when the tab wakes',
+     [['        lastScanAt = 0;\n        scanNow(true);', '        lastScanAt = 0;']],
+     null, 'test_scan.js'],
+
+    // A permanent latch here meant one interrupted stream disabled the DOM
+    // fallback for the life of the page.
+    ['dormancy: trust the stream forever again',
+     [['const STREAM_TRUST_MS = 30000;', 'const STREAM_TRUST_MS = 1e12;']],
+     null, 'test_scan.js'],
+
+    // The agent hands out a pairing token ONCE per run, so a rescan that wipes
+    // it kills the bridge until the agent is restarted.
+    ['dormancy: let a manual rescan wipe the pairing token',
+     [["const CONFIG_KEYS = ['bridge_hosts', AWAKE_KEY, TOKEN_KEY];",
+       "const CONFIG_KEYS = ['bridge_hosts'];"]], null, 'test_scan.js'],
+
     // The upload is a real one to the provider and takes seconds. Sending as
     // soon as the File is handed over produces a message with no image in it,
     // and nothing anywhere reports a failure.
     ['image: send without waiting for the upload to land',
-     [['        const until = Date.now() + ATTACH_TIMEOUT_MS;\n'
-       + '        while (Date.now() < until) {\n'
-       + '            await pause(ATTACH_POLL_MS);\n'
-       + '            if (thumbCount(site.attach.thumb, name) > before) return name;\n'
-       + '        }\n'
-       + '        throw new Error(`the upload did not finish within ${ATTACH_TIMEOUT_MS / 1000}s`);',
-       '        return name;']], null, 'test_image.js'],
+     [['        if (await waitForThumb(name, before)) return name;', '        return name;']],
+     null, 'test_image.js'],
 
     // A model told the image is attached, looking at a message without one,
     // does not say "I cannot see it" - it describes something plausible.

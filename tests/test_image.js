@@ -40,7 +40,15 @@ const realSetTimeout = setTimeout;
 global.setTimeout = (fn, ms) => { clock += (ms || 0); return realSetTimeout(fn, 0); };
 // The scan ticker, kept so a tick can be driven by hand.
 const tickFns = [];
-global.setInterval = (fn, ms) => { if (ms === 1500) tickFns.push(fn); return 0; };
+const realSetInterval = setInterval, realClearInterval = clearInterval;
+// The 1500ms scan tick is driven by hand; anything else - the backstop poll
+// inside the wait for an upload - runs for real, advancing the clock by the
+// delay it asked for so its deadline arithmetic is exercised honestly.
+global.setInterval = (fn, ms) => {
+    if (ms === 1500) { tickFns.push(fn); return 0; }
+    return realSetInterval(() => { clock += ms; fn(); }, 1);
+};
+global.clearInterval = id => realClearInterval(id);
 const RealDate = Date;
 global.Date = class extends RealDate { static now() { return clock; } };
 
@@ -159,9 +167,17 @@ global.Event = class { constructor(t) { this.type = t; } };
 global.KeyboardEvent = class { constructor(t) { this.type = t; } };
 global.ClipboardEvent = window.ClipboardEvent;
 global.DataTransfer = window.DataTransfer;
-// The script only rescans when the DOM changed, and it learns that from
-// here - without this the second batch of a run is never looked at.
-global.MutationObserver = class { constructor(cb) { global.__mo = cb; } observe() {} };
+// The script only rescans when the DOM changed, and it learns that from here -
+// without this the second batch of a run is never looked at. A registry rather
+// than one callback: the wait for an upload creates an observer of its own, and
+// the last one constructed must not become "the" observer the tests fire.
+const observers = [];
+global.MutationObserver = class {
+    constructor(cb) { this.cb = cb; observers.push(this); }
+    observe() {}
+    disconnect() { const i = observers.indexOf(this); if (i > -1) observers.splice(i, 1); }
+};
+global.__mo = () => observers.slice().forEach(o => o.cb());
 global.GM_registerMenuCommand = () => {};
 
 const store = new Map([['bridge_token', 'tok-1'], ['bridge_hosts', [HOST]]]);

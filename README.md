@@ -156,12 +156,45 @@ If nothing fires, the console log tells you which half is quiet: no badge means
 the userscript is not active on that site, and a badge with no agent traffic
 usually means the block never left the model's reasoning trace.
 
+### When the tab is in the background
+
+A hidden tab is not a running tab. Chrome throttles its timers to one a second,
+and after five minutes hidden to one a **minute**; Memory Saver may then freeze
+it, and eventually discard it and reload the page. So a bridge left to get on
+with a long job in a background tab appears to go dormant — which is exactly
+when you would leave it alone.
+
+Most of that is handled for you. The script scans on DOM changes rather than
+only on its timer while the tab is hidden, and forces a full rescan when the tab
+becomes visible or is unfrozen, so anything that landed while it was asleep is
+picked up on the way back. A stream that was cut off mid-answer no longer
+disables the DOM fallback for the rest of the page's life either.
+
+What no script can survive is the tab being **discarded** — the page is gone and
+the script with it. Two ways to prevent that:
+
+- **Keep this tab awake in the background** in the Tampermonkey menu. It plays an
+  inaudible tone, and a tab that is playing audio is not throttled, frozen or
+  discarded. The tab shows a speaker icon while it is on, which is why it is off
+  by default. Chrome may need one click on the page before it starts; the console
+  says so if it does.
+- **Chrome's own setting**, which is tidier if it is enough: **Settings →
+  Performance → "Always keep these sites active"**, and add the chat's host.
+
+Either way the executed-id records live in the userscript's storage, so a reload
+never re-runs a block that already ran.
+
 ### Keyboard shortcuts
 
 | Keys | What it does |
 |---|---|
 | **Ctrl+Shift+B** | Adopt (or drop) the current site, for a chat with no adapter. Reload afterwards. |
 | **Ctrl+Shift+R** | Clear this browser's executed-id records and rescan, so a block can run again. |
+
+Ctrl+Shift+R keeps the three things that are settings rather than records: the
+adopted-host list, the keep-awake choice, and the pairing token. Wiping the
+token used to be the fastest way to kill the bridge outright, since the agent
+hands one out only once per run.
 
 ## Layout
 
@@ -192,8 +225,8 @@ probes/               tools for inspecting a live chat's network traffic
 ## Tests
 
 ```
-python tests/run_all.py            # 366 tests + 5 live captures replayed
-python tests/run_all.py --mutate   # also check the tests can actually fail (18 mutations)
+python tests/run_all.py            # 390 tests + 5 live captures replayed
+python tests/run_all.py --mutate   # also check the tests can actually fail (22 mutations)
 python tests/run_all.py --bench    # throughput
 ```
 

@@ -80,15 +80,36 @@ const textarea = new El('textarea');
 textarea.value = '';
 root.append(textarea);
 
+const docListeners = {};
+const fireDoc = t => (docListeners[t] || []).slice().forEach(f => f({}));
+const keydown = init => (docListeners.keydown || []).slice()
+    .forEach(f => f(Object.assign({ preventDefault() {} }, init)));
+
+// The script gates its mutation-driven scan on elapsed wall time, and trusts a
+// stream payload for a window of it. Both need time to be movable, or the
+// tests would have to sleep for real seconds to reach either edge.
+let clockSkew = 0;
+const realNow = Date.now;
+Date.now = () => realNow() + clockSkew;
+const advance = ms => { clockSkew += ms; };
+
 global.document = {
     documentElement: root,
     querySelectorAll(sel) {
         const want = sel.split(',').map(s => s.trim().toUpperCase());
         return allEls().filter(e => want.includes(e.tagName));
     },
-    addEventListener() {},
-    removeEventListener() {},
+    // Recorded, not discarded: the script listens for the events a browser
+    // sends when it throttles, freezes and revives a background tab, and those
+    // are exactly the paths the dormancy tests below drive.
+    addEventListener(type, fn) { (docListeners[type] || (docListeners[type] = [])).push(fn); },
+    removeEventListener(type, fn) {
+        const l = docListeners[type] || [];
+        const i = l.indexOf(fn);
+        if (i > -1) l.splice(i, 1);
+    },
     execCommand() {},
+    hidden: false,
 };
 global.window = {
     HTMLTextAreaElement: { prototype: {} },
@@ -99,11 +120,34 @@ global.window = {
     location: { href: process.env.BRIDGE_TEST_URL || 'https://chat.qwen.ai/c/abc123' },
     // Monaco writes the block's full model text here when its copy action runs.
     navigator: { clipboard: { writeText: async () => {} } },
+    // The stream hook installs over this. Having both paths in one harness is
+    // what lets the DOM fallback be tested against a stream that delivered, and
+    // against one that was cut off by a frozen tab.
+    fetch: async () => mkResponse(),
 };
+let streamBody = '';
+function mkResponse() {
+    const bytes = new TextEncoder().encode(streamBody);
+    let sent = false;
+    return {
+        body: { getReader: () => ({ read: async () => sent ? { done: true } : (sent = true, { done: false, value: bytes }) }) },
+        clone() { return mkResponse(); },
+    };
+}
+global.TextDecoder = TextDecoder;
 global.location = window.location;
 global.Event = class { constructor(t) { this.type = t; } };
 global.KeyboardEvent = class { constructor(t) { this.type = t; } };
-global.MutationObserver = class { constructor(cb) { this.cb = cb; global.__mo = cb; } observe() {} };
+// A registry rather than one callback: the script now creates a second
+// observer while it waits for an image upload, and the last one constructed
+// must not become "the" observer the tests fire.
+const observers = [];
+global.MutationObserver = class {
+    constructor(cb) { this.cb = cb; observers.push(this); }
+    observe() {}
+    disconnect() { const i = observers.indexOf(this); if (i > -1) observers.splice(i, 1); }
+};
+global.__mo = () => observers.slice().forEach(o => o.cb());
 
 // ---- fake GM_* ------------------------------------------------------------
 // On a site whose adapter knows where the answer lives, a block only counts if
@@ -207,7 +251,12 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
 
 (async () => {
     let pass = 0, fail = 0;
-    const check = (name, cond) => { if (cond) { console.log(`  PASS  ${name}`); pass++; } else { console.log(`  FAIL  ${name}`); fail++; } };
+    const check = (name, cond, extra) => {
+        if (cond) { console.log(`  PASS  ${name}`); pass++; return; }
+        console.log(`  FAIL  ${name}`);
+        if (extra !== undefined) console.log(`        ${extra}`);
+        fail++;
+    };
 
     console.log('\n== streaming block must NOT execute until stable ==');
     const b = mkBlock('{"id":"step_1","calls":[{"tool":"bash","cmd":"echo a"}]}');
@@ -509,6 +558,103 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     tick();
     check('scans after a mutation', scanned > 0);
     document.querySelectorAll = origQSA;
+
+    console.log('\n== a tab the browser has put to sleep ==');
+    // Chrome throttles a hidden tab's timers to one a second, and to one a
+    // MINUTE after five minutes hidden; Memory Saver may then freeze it
+    // outright. Everything below is the bridge going quiet exactly when a long
+    // tool run was left to get on with it, which is what "the browser went
+    // dormant" looks like from the outside.
+    await sleep(); tick(); await sleep(); await sleep();
+    // Batches queue and drain a step at a time, so waiting a fixed number of
+    // turns lets one test be judged on the previous test's batch. Wait for THIS
+    // one - with no tick, since the point is that no tick is needed.
+    const settle = async (n = 60) => { for (let i = 0; i < n && sent.length === 0; i++) await sleep(); };
+    sent.length = 0;
+    document.hidden = true;
+    // NO tick() anywhere in this test: the ticker is what the browser has
+    // throttled, so the mutation has to be what drives the scan. Two scans are
+    // still needed - the block must read identical twice - and the gap between
+    // them has to clear the rate limit, hence the clock move.
+    // Each advance clears the rate limit, so a mutation really does drive a
+    // scan. Without it the scan is skipped and the test would be measuring the
+    // gate rather than the behaviour.
+    advance(600);
+    mkBlock('{"id":"hidden_1","calls":[{"tool":"bash","cmd":"echo hidden"}]}');
+    await sleep();
+    advance(600);
+    global.__mo();
+    await settle();
+    check('a hidden tab still runs a payload, with no tick at all',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo hidden', JSON.stringify(sent));
+
+    // A frozen tab misses everything, including the end of a response stream.
+    // Coming back has to catch up rather than wait for the next tick.
+    sent.length = 0;
+    advance(600);
+    mkBlock('{"id":"frozen_1","calls":[{"tool":"bash","cmd":"echo thawed"}]}');
+    await sleep();
+    document.hidden = false;
+    fireDoc('visibilitychange');
+    await settle();
+    check('becoming visible again rescans without waiting for a tick',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo thawed', JSON.stringify(sent));
+
+    sent.length = 0;
+    document.hidden = true;
+    advance(600);
+    mkBlock('{"id":"resumed_1","calls":[{"tool":"bash","cmd":"echo resumed"}]}');
+    await sleep();
+    document.hidden = false;
+    fireDoc('resume');
+    await settle();
+    check('an unfrozen tab rescans on resume',
+        sent.length === 1 && sent[0].calls[0].cmd === 'echo resumed', JSON.stringify(sent));
+
+    if (SITE_IS_QWEN) {
+        console.log('\n== the stream is trusted for a while, not forever ==');
+        // A tab frozen mid-answer never finishes reading that response. When the
+        // stream latch was permanent, one such freeze disabled the DOM fallback
+        // for the life of the page, and the bridge stayed dead until a reload.
+        document.hidden = false;
+        sent.length = 0;
+        streamBody = 'data: ' + JSON.stringify({
+            choices: [{ delta: { phase: 'answer',
+                content: '```json\n{"id":"stream_1","calls":[{"tool":"bash","cmd":"echo streamed"}]}\n```' } }],
+        }) + '\ndata: [DONE]\n';
+        await window.fetch('https://chat.qwen.ai/api/v1/chat/completions', { method: 'POST' });
+        await settle();
+        check('a stream payload runs',
+            sent.length === 1 && sent[0].calls[0].cmd === 'echo streamed', JSON.stringify(sent));
+
+        sent.length = 0;
+        mkBlock('{"id":"dom_after_stream","calls":[{"tool":"bash","cmd":"echo dom"}]}');
+        tick(); await sleep(); tick(); await sleep(); await sleep();
+        check('the DOM path stays off while the stream is fresh', sent.length === 0, JSON.stringify(sent));
+
+        advance(60000);          // a minute with nothing more from the stream
+        tick(); await sleep(); tick(); await settle();
+        check('...and comes back once the stream has gone quiet',
+            sent.length === 1 && sent[0].calls[0].cmd === 'echo dom', JSON.stringify(sent));
+    }
+
+    console.log('\n== a manual rescan keeps the things that are not records ==');
+    store.set('bridge_awake', true);
+    const tokenBefore = store.get('bridge_token');
+    keydown({ ctrlKey: true, shiftKey: true, key: 'R' });
+    // Read the store NOW: the rescan the shortcut triggers records ids again as
+    // soon as it completes, which would hide whether they were ever cleared.
+    const keysAfterWipe = [...store.keys()];
+    await sleep();
+    // The agent hands a token out ONCE per run. Wiping it here left the bridge
+    // dead until the agent was restarted, reporting that another client had
+    // taken the pairing - a rescan that permanently broke the thing it was
+    // meant to unstick.
+    check('the pairing token survives', store.get('bridge_token') === tokenBefore);
+    check('the adopted-host list survives', Array.isArray(store.get('bridge_hosts')));
+    check('the keep-awake setting survives', store.get('bridge_awake') === true);
+    check('execution records are cleared',
+        keysAfterWipe.every(k => !/^bridge_[a-z0-9]+_/.test(k)), keysAfterWipe.join(','));
 
     console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAILURES'}: ${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
