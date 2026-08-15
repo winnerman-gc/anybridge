@@ -204,6 +204,53 @@ Fidelity is not the price. A single 9,000-character paste into ChatGPT loses
 exactly the same leading indentation as the same text in pieces, because its
 editor normalises pasted plain text either way.
 
+## Sending a local image (Qwen)
+
+Text goes back into the chat as a paste. An image cannot travel that way - a
+chat reads pixels only from an upload - so a `read_image` tool needs the
+userscript to put a real `File` into the site's own upload code.
+
+It can. **A synthetic `paste` carrying a File is enough on Qwen**: the site
+uploads it and renders a thumbnail, exactly as for a real Ctrl+V. That is the
+same event `setComposerText` already uses for text, so no new privilege and no
+site-specific button driving is needed. Measured with `probes/image_probe_cdp.js`
+on 2026-08-15, against a 761-byte PNG:
+
+| Path | Attaches | Notes |
+|---|---|---|
+| `paste` with a File | yes | one upload; the composer is a `<textarea>` and the handler is document-level |
+| `drop` with a File | yes | but only to ONE element - dispatching up the ancestor chain had five levels each handle it, and the same file uploaded five times |
+| `#filesUpload.files` + `change` | **no** | nothing happens, even though that hidden input is what the site's own picker fills. A *trusted* set over CDP does nothing either, so this is not about `isTrusted` |
+| patch `HTMLInputElement.click`, drive `+ -> Upload attachment` | yes | works, but has more moving parts and the menu labels are localised |
+
+The upload is Alibaba OSS: `POST /api/v2/files/getstsToken`, then a `PUT` of the
+file to `qwen-webui-prod.oss-accelerate.aliyuncs.com`. The answer request then
+carries it beside the text, which is what proves the model is given the image
+rather than the file merely being stored:
+
+```json
+"files": [{"type": "image", "id": "a9c5cd4d-...", "url": "https://qwen-webui-prod.oss-accelerate.aliyuncs.com/<user>/<id>_name.png"}]
+```
+
+Asked to name the colour filling the image, `qwen3.8-max` answered correctly.
+
+**The timing is the trap.** The `PUT` completed 1.8s after the paste, but the
+thumbnail appeared only at **~14s**. `pasteResult` clicks send 500ms after
+pasting, which would send the message with no image attached and no error
+anywhere. Whatever sends an image must poll for
+`.file-card-list img.vision-item-image` whose `alt` is the file name, not wait a
+fixed delay.
+
+Two things about the probe are worth keeping if it is ever rewritten, because
+each cost a wasted run:
+
+- **Wait for the composer.** On a half-initialised page the attach control
+  renders disabled (`opacity:0.4;cursor:not-allowed`) and *every* path fails for
+  that reason alone. The first run concluded "no synthetic event attaches a
+  file", which was simply wrong.
+- **Reload between paths.** Run back to back they contaminate each other: an
+  upload started by one lands during the next and is credited to it.
+
 ## Fallbacks
 
 - **DOM scanning** runs when there is no stream adapter, or when the stream
