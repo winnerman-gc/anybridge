@@ -18,7 +18,7 @@ const src = fs.readFileSync(SRC, 'utf8');
 const HOST = {
     qwen: 'chat.qwen.ai', chatgpt: 'chatgpt.com', kimi: 'www.kimi.com',
     claude: 'claude.ai', deepseek: 'chat.deepseek.com', grok: 'grok.com',
-    gemini: 'gemini.google.com',
+    gemini: 'gemini.google.com', zai: 'chat.z.ai',
 };
 
 // A capture whose name is not in HOST resolves to no site at all, so the script

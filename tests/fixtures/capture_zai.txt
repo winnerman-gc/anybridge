@@ -1,0 +1,30 @@
+data: {"type":"chat:completion","data":{"delta_content":"1.  **Analyze the","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" Request:**\n    *   Output format: Fenced ```","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"json code block.\n    *   Content: `{\"calls\": [{\"tool","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"\": \"noop\"}]}`\n    *   Constraint: \"and nothing","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" else.\" (This means no extra text before or after the code","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" block).\n\n2.  **Construct the Output:**\n    ```json\n    {\"calls\":","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" [{\"tool\": \"noop\"}]}\n    ```\n\n3.  **Verify constraints","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":":**\n    *   Is it a fenced `","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"json` code block? Yes.\n    *   Does it contain the exact JSON","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" requested? Yes.\n    *   Is there anything else? No.\n\n","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"4.  **Finalize Output:** Return the","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":" constructed string.","phase":"thinking"}}
+
+data: {"type":"chat:completion","data":{"delta_content":"```json\n{\"calls\": [{\"tool\": \"noop\"}]}\n```","phase":"answer"}}
+
+data: {"type":"chat:completion","data":{"phase":"other","usage":{"prompt_tokens":39,"completion_tokens":165,"total_tokens":204,"prompt_tokens_details":{}}}}
+
+data: {"type":"chat:completion","data":{"phase":"done","done":true}}
+

@@ -13,6 +13,7 @@ the top of `userscript/bridge.user.js`; the rest of the script is shared.
 | Gemini | `gemini.google.com` | `BardFrontendService/StreamGenerate` (XHR, batchexecute) | answer read only from its own field | live bytes |
 | DeepSeek | `chat.deepseek.com` | `/api/v0/chat/completion` | current fragment must be typed `RESPONSE`, not `THINK` | live bytes |
 | Grok | `grok.com`, `x.ai` | — (not observable from the page) | n/a — DOM scanning only | probed, see below |
+| z.ai | `chat.z.ai` | `/api/v2/chat/completions` | `data.phase !== "answer"` | live bytes |
 
 "Unit tests only" means the frame shape was written from memory and the tests
 prove the adapter is self-consistent with it — not that it matches what the
@@ -38,9 +39,12 @@ Capturing real traffic found a serious error in each site that was checked:
   to `response/fragments/-1/content` — and reasoning and answer share that one
   path, separated only by the `type` of the most recently created fragment.
 
-Every one of the six sites checked against live traffic had a real defect. None
-were caught by unit tests, because the tests encoded the same wrong assumption
-as the code.
+Every one of the first six sites checked against live traffic had a real
+defect. None were caught by unit tests, because the tests encoded the same
+wrong assumption as the code. A seventh, z.ai, was checked the same way and
+came back clean on the stream shape - see below - though the check still
+found something worth fixing: `MONACO_ACTION`'s selector had been hardcoded to
+Qwen's, silently limiting the virtualised-editor recovery path to one site.
 
 ## DeepSeek's fragment types
 
@@ -85,6 +89,34 @@ required to look like `{"`, an object opening with a string key.
 
 Reasoning traces are dropped at the adapter, before any payload scan. A model's
 private thinking is never treated as an instruction to the bridge.
+
+## z.ai's stream, and its CodeMirror editor
+
+Verified live 2026-08-18 with a debug Chrome the user logged into by hand,
+captured with a one-off script modeled on `probes/stream_probe_cdp.js` (that
+script's site list is fixed; a throwaway variant was simplest for one extra
+host). The stream turned out to be the simplest of the seven: bare `data:
+{...}` events, no patch/delta envelope like ChatGPT's or DeepSeek's. Every
+frame has the same shape -
+
+```json
+{"type":"chat:completion","data":{"delta_content":"...","phase":"thinking"}}
+```
+
+- `phase: "thinking"` is the model's private reasoning trace.
+- `phase: "answer"` is `delta_content` actually meant for the user; frames
+  concatenate, same as everywhere else that streams deltas.
+- `phase: "done"` (with `"done": true`) ends the stream; `phase: "other"`
+  carries token-usage accounting, not text.
+
+It renders code blocks in CodeMirror, which virtualises exactly like Qwen's
+Monaco does - long payloads would be truncated in the DOM. `MONACO_ACTION` used
+to be a single hardcoded selector shared by all sites, so it only ever worked
+for Qwen; it is now `site.monaco` per adapter. z.ai's copy button
+(`.copy-code-button`) was measured the same way Qwen's was: intercept
+`navigator.clipboard.writeText` rather than read the real clipboard, click the
+button, and check it received the full model text rather than the DOM's
+(possibly truncated) one. It did.
 
 ## Finding the payload in an answer
 
@@ -132,6 +164,7 @@ name the container the assistant's messages live in:
 | DeepSeek | `.ds-assistant-message-main-content` | `.ds-message` only — no user-specific class | live DOM, 2026-08-08 |
 | Qwen | `.qwen-chat-message-assistant`, `.response-message-content` | `.qwen-chat-message-user`, `.chat-user-message` | live DOM, 2026-08-08 |
 | Grok | `[data-testid="assistant-message"]` | `[data-testid="user-message"]` | live DOM, 2026-08-08 |
+| z.ai | `.chat-assistant` | `.chat-user` | live DOM, 2026-08-18 |
 
 Grok is the one that matters most: it has no usable stream, so DOM scanning is
 its only path rather than a fallback.
@@ -175,7 +208,7 @@ That position is coherent, so the answer is not to keep rewording the prompt
 until it stops noticing. **Use Anthropic's own tooling for local file work with
 Claude** - Claude Code, or an MCP filesystem server - where a tool call is a
 real tool call rather than a convention layered over chat text. The bridge is
-for the six sites that do accept it.
+for the other sites that do accept it.
 
 The per-site prompt mechanism it prompted is still here and still useful:
 `GET /prompt?site=<name>` serves `prompts/sys_prompt.<name>.txt` when that file

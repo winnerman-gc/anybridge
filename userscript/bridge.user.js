@@ -98,8 +98,9 @@
     //   urlRe    which request URL carries the assistant's answer stream
     //            (null = no usable stream, fall back to DOM scanning)
     //   frame    fold one decoded stream frame into the accumulating answer
-    //   monaco   the site renders code blocks in a virtualising editor, so the
-    //            DOM fallback must go through the block's copy action
+    //   monaco   CSS selector for the block's copy action, when the site renders
+    //            code blocks in a virtualising editor - the DOM fallback must
+    //            go through that action rather than textContent (see below)
     //   input    CSS selector for the composer (optional; generic scan otherwise)
     //   send     CSS selector for the send button (optional)
     //   answer   the container the ASSISTANT's messages render into. The DOM
@@ -214,7 +215,7 @@
             name: 'qwen',
             host: /(^|\.)qwen\.ai$/,
             urlRe: /\/api\/v\d+\/chat\/completions/,
-            monaco: true,
+            monaco: '.qwen-markdown-code-header-action-item',
             answer: '.qwen-chat-message-assistant, .response-message-content',
             // Measured 2026-08-15 with probes/image_probe_cdp.js. A synthetic
             // paste carrying a File is uploaded exactly as a real Ctrl+V is,
@@ -374,6 +375,36 @@
                     const txt = inner && inner[4] && inner[4][0] && inner[4][0][1] && inner[4][0][1][0];
                     if (typeof txt === 'string' && txt) st.text = txt;
                 }
+            }
+        },
+        {
+            // Zhipu's chat.z.ai. Plain SSE, verified live 2026-08-18: a bare
+            // "data: {...}" per event, no patch/delta envelope like ChatGPT's
+            // or DeepSeek's. Reasoning and answer share the exact same shape
+            // and are told apart only by data.phase - "thinking" is the
+            // model's private trace, "answer" is delta_content actually meant
+            // for the user, "done" ends the stream.
+            name: 'zai',
+            host: /(^|\.)z\.ai$/,
+            urlRe: /\/api\/v\d+\/chat\/completions/,
+            // CodeMirror virtualises the same way Qwen's Monaco does - only
+            // the visible lines exist in the DOM. Measured live: its
+            // ".copy-code-button" calls navigator.clipboard.writeText with
+            // the full model text, so the same interception recovers it.
+            monaco: '.copy-code-button',
+            input: '#chat-input',
+            send: '#send-message-button',
+            // Measured live: the assistant's turn renders inside
+            // ".chat-assistant", the user's inside ".chat-user" - nothing
+            // guessed, both classes sit directly on each turn's container.
+            answer: '.chat-assistant',
+            frame(st, o) {
+                if (!o || o.type !== 'chat:completion') return;
+                const d = o.data;
+                if (!d) return;
+                if (d.phase === 'done') { st.done = true; return; }
+                if (d.phase !== 'answer') return;   // "thinking" or "other"
+                if (typeof d.delta_content === 'string') st.text += d.delta_content;
             }
         },
         {
@@ -725,25 +756,28 @@
         return out;
     }
 
-    // Qwen renders code blocks in a Monaco editor, which VIRTUALISES: only the
-    // ~30 visible lines exist in the DOM. Measured on a real 72-line payload,
-    // textContent held 1390 chars of a 3553-char block and the JSON never
-    // closed - so scraping the DOM means long calls silently never run.
+    // Qwen (Monaco) and z.ai (CodeMirror) both render code blocks in a
+    // VIRTUALISING editor: only the visible lines exist in the DOM. Measured
+    // on a real 72-line Qwen payload, textContent held 1390 chars of a
+    // 3553-char block and the JSON never closed - so scraping the DOM means
+    // long calls silently never run.
     //
-    // The block header's copy action reads Monaco's model rather than the DOM.
-    // We intercept the writeText it calls instead of reading the clipboard:
-    // no permissions needed, and the user's real clipboard is never touched.
+    // The block header's copy action reads the editor's model rather than the
+    // DOM. We intercept the writeText it calls instead of reading the
+    // clipboard: no permissions needed, and the user's real clipboard is
+    // never touched.
     //
-    // Gated on site.monaco. Every other chat renders the full block into the
-    // DOM, so clicking their copy buttons would be a side effect for no gain.
-    const MONACO_ACTION = '.qwen-markdown-code-header-action-item';
+    // Gated on site.monaco, which holds THAT SITE's copy-action selector.
+    // Every other chat renders the full block into the DOM, so clicking their
+    // copy buttons would be a side effect for no gain.
 
-    // The header holds a copy action AND a download action. Taking the first
-    // match works today only because copy happens to come first; if that order
-    // ever flips we would trigger a file download on every payload. Identify it
-    // by its icon and fall back to first-match only if the icon is not found.
+    // The header holds a copy action AND a download action on Qwen. Taking the
+    // first match works today only because copy happens to come first; if
+    // that order ever flips we would trigger a file download on every
+    // payload. Identify it by its icon and fall back to first-match only if
+    // the icon is not found.
     function findCopyButton(el) {
-        const items = [...el.querySelectorAll(MONACO_ACTION)];
+        const items = [...el.querySelectorAll(site.monaco)];
         const byIcon = items.find(it => {
             const use = it.querySelector('use');
             const href = use && (use.getAttribute('xlink:href') || use.getAttribute('href') || '');

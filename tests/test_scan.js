@@ -157,11 +157,16 @@ global.__mo = () => observers.slice().forEach(o => o.cb());
 const ANSWER_CLASS = {
     'chat.qwen.ai': 'qwen-chat-message-assistant',
     'claude.ai': 'font-claude-response',
+    'chat.z.ai': 'chat-assistant',
 };
 const TEST_HOST = (process.env.BRIDGE_TEST_URL || 'https://chat.qwen.ai/c/abc123').split('/')[2];
 const ANSWER = ANSWER_CLASS[TEST_HOST];
 const SITE_HAS_ANSWER = !!ANSWER;
-const SITE_IS_QWEN = TEST_HOST === 'chat.qwen.ai';   // the only Monaco site
+const SITE_IS_QWEN = TEST_HOST === 'chat.qwen.ai';   // one of two virtualising-editor sites
+const SITE_IS_ZAI = TEST_HOST === 'chat.z.ai';       // the other one (CodeMirror, not Monaco)
+// Selector its copy action uses, and the class name the DOM test below hangs
+// the fake header off. Real values, taken straight from the SITES table.
+const COPY_ACTION_CLASS = SITE_IS_ZAI ? 'copy-code-button' : 'qwen-markdown-code-header-action-item';
 function answerHost() {
     if (!ANSWER) return root;
     const turn = root.append(new El('div'));
@@ -319,10 +324,11 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     tick(); await sleep(); tick(); await sleep();
     check('nested pre>code counted once', sent.length === 1 && sent[0].calls.length === 1);
 
-    // Monaco recovery belongs to the Qwen adapter, so only the Qwen run
-    // exercises it. Elsewhere there is no site.monaco and nothing to test.
-    if (SITE_IS_QWEN) {
-    console.log('\n== MONACO: virtualised block, DOM truncated ==');
+    // Virtualised-editor recovery belongs to whichever adapter sets
+    // site.monaco (Qwen's Monaco, z.ai's CodeMirror), so only those runs
+    // exercise it. Elsewhere there is no site.monaco and nothing to test.
+    if (SITE_IS_QWEN || SITE_IS_ZAI) {
+    console.log(`\n== ${SITE_IS_ZAI ? 'CODEMIRROR' : 'MONACO'}: virtualised block, DOM truncated ==`);
     sent.length = 0;
     // Reproduces the measured reality: a 72-line payload whose DOM text holds
     // only the ~30 rendered lines (JSON never closes), while the header's copy
@@ -335,13 +341,13 @@ function setText(el, text) { el.textContent = text; global.__mo(); }
     const truncated = fullPayload.slice(0, 400);          // cut mid-content, unbalanced
     (function () {
         const pre = answerHost().append(new El('pre'));
-        pre.className = 'qwen-markdown-code';
+        pre.className = SITE_IS_ZAI ? 'language-json' : 'qwen-markdown-code';
         const hdr = pre.append(new El('div'));
-        hdr.className = 'qwen-markdown-code-header-action-item';
-        // Clicking it does what Monaco does: writeText with the FULL text.
+        hdr.className = COPY_ACTION_CLASS;
+        // Clicking it does what the real editor does: writeText with the FULL text.
         hdr.onclick = () => { global.window.navigator.clipboard.writeText(fullPayload); };
         const body = pre.append(new El('div'));
-        body.className = 'qwen-markdown-code-body';
+        body.className = SITE_IS_ZAI ? 'cm-content' : 'qwen-markdown-code-body';
         body.textContent = truncated;
         global.__mo();
     })();

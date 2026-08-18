@@ -260,6 +260,17 @@ async function drive(name, host, url, body, chunk) {
             calls.length === 2 && calls.every(c => c.tool === 'list'), JSON.stringify(calls));
     }
 
+    // ── z.ai ────────────────────────────────────────────────
+    // Copied from a live capture (capture_zai.txt): a bare "data: {...}" per
+    // event, no patch envelope. phase "thinking" is the reasoning trace,
+    // "answer" is delta_content actually meant for the user, "done" ends it.
+    await drive('zai', 'chat.z.ai', '/api/v2/chat/completions?requestId=1',
+        sse({ type: 'chat:completion', data: { delta_content: EVIL, phase: 'thinking' } }) +
+        sse({ type: 'chat:completion', data: { delta_content: good('z_1').slice(0, 20), phase: 'answer' } }) +
+        sse({ type: 'chat:completion', data: { delta_content: good('z_1').slice(20), phase: 'answer' } }) +
+        sse({ type: 'chat:completion', data: { phase: 'other', usage: { total_tokens: 1 } } }) +
+        sse({ type: 'chat:completion', data: { phase: 'done', done: true } }));
+
     // ── Grok ────────────────────────────────────────────────
     // Grok is DOM-scanning only: its answer never crosses a page-level
     // transport, so no stream hook should be installed at all. Matching its

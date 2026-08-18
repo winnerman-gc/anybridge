@@ -115,6 +115,7 @@ const siteOf = url => {
     if (/claude\.ai$/.test(h)) return 'claude';
     if (/deepseek\.com$/.test(h)) return 'deepseek';
     if (/grok\.com$/.test(h)) return 'grok';
+    if (/z\.ai$/.test(h)) return 'zai';
     return null;
 };
 

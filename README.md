@@ -16,10 +16,11 @@ Gemini or Qwen in your browser, exactly as you normally would, and the plan
 you already pay for is what powers it. This repo is only the two halves that
 carry a tool call out of that conversation and the result back into it.
 
-Works with ChatGPT, Gemini, Kimi, DeepSeek, Qwen and Grok. Claude's adapter is
-built and tested, but Claude itself declines to act as the bridge's model - see
-[`docs/SITES.md`](docs/SITES.md). Five sites are replayed from captured live
-traffic by the test suite, and a sixth was verified live — see [`docs/SITES.md`](docs/SITES.md).
+Works with ChatGPT, Gemini, Kimi, DeepSeek, Qwen, Grok and z.ai. Claude's
+adapter is built and tested, but Claude itself declines to act as the
+bridge's model - see [`docs/SITES.md`](docs/SITES.md). Six sites are replayed
+from captured live traffic by the test suite, and Qwen was verified live by
+other means — see [`docs/SITES.md`](docs/SITES.md).
 
 > **Read the [safety model](#safety-model) before you run this.** The agent gives
 > a chat window real file access on the machine it runs on — bounded to
@@ -266,7 +267,7 @@ and only mutation testing showed it.
   showing a valid tool call. The script records what it primed a chat with and
   refuses to act on anything that came from it.
 - **Only the model's own messages count.** A code block being on the page never
-  meant the model wrote it — your own messages are on the page too. All seven
+  meant the model wrote it — your own messages are on the page too. All eight
   supported sites name the container the assistant writes into, each measured in
   a live session, and nothing outside it is scanned. A host you adopt by hand
   has no such selector, so there a smaller subtractive filter is all that

@@ -1,0 +1,6 @@
+{
+  "site": "zai",
+  "url": "https://chat.z.ai/api/v2/chat/completions?timestamp=1787086383696&requestId=891ce0d6-df61-4d38-82f5-a37aaf289fcd&user_id=REDACTED&version=0.0.1&platform=web&token=REDACTED",
+  "contentType": "text/event-stream; charset=utf-8",
+  "bytes": 1892
+}

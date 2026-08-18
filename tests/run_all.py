@@ -25,12 +25,17 @@ JS_SUITES = ["test_sites.js", "test_long.js", "test_stream.js", "test_scan.js",
              "test_image.js"]
 PY_SUITES = ["test_tools.py"]
 
-# The scan suite runs three times, because the DOM path behaves differently
+# The scan suite runs four times, because the DOM path behaves differently
 # depending on what the adapter knows and the modes fail in opposite directions.
-# The default is Qwen: an answer selector AND a virtualising editor. Claude has
-# an answer selector and no Monaco. An adopted host has neither, so only the
-# subtractive "this is the user's turn" filters apply there.
+# The default is Qwen: an answer selector AND a virtualising editor (Monaco).
+# z.ai has the same shape but a different virtualising editor (CodeMirror), so
+# it re-exercises the generalised site.monaco selector rather than a hardcoded
+# one. Claude has an answer selector and no virtualising editor. An adopted
+# host has neither, so only the subtractive "this is the user's turn" filters
+# apply there.
 JS_VARIANTS = [
+    ("test_scan.js  (zai: scoped, codemirror)", "test_scan.js",
+     {"BRIDGE_TEST_URL": "https://chat.z.ai/c/abc123"}),
     ("test_scan.js  (claude: scoped, no monaco)", "test_scan.js",
      {"BRIDGE_TEST_URL": "https://claude.ai/chat/abc123"}),
     ("test_scan.js  (adopted host: unscoped)", "test_scan.js",
